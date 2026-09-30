@@ -338,11 +338,14 @@ class KRTTrackerAgent:
         if not AutostartManager.is_enabled():
             AutostartManager.enable()
 
-        # 4. Fetch today's summary
+        # 4. Clean up any unclosed / stale sessions from previous unexpected shutdowns or connection losses
+        self.client.cleanup_stale_sessions()
+
+        # 5. Fetch today's summary
         summary = self.client.get_today_summary()
         self.today_prior_seconds = summary.get("total_seconds", 0)
 
-        # 5. Startup Session Qualification Modal
+        # 6. Startup Session Qualification Modal
         user_name = self.get_user_display_name().split()[0]
         logger.info(f"Opening startup qualification modal for {user_name}...")
         startup_modal = StartupModal(

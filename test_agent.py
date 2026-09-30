@@ -50,6 +50,9 @@ class TestKRTAgent(unittest.TestCase):
             self.assertEqual(selected["name"], "KRT-Bookings-Tracker.exe")
 
     def test_crypto_storage(self):
+        # Backup existing credentials if any
+        original_creds = SecureStorage.load_credentials()
+
         sample_data = {"test_key": "test_value_123", "user_id": "test-uuid-456"}
         save_res = SecureStorage.save_credentials(sample_data)
         self.assertTrue(save_res)
@@ -59,8 +62,11 @@ class TestKRTAgent(unittest.TestCase):
         self.assertEqual(loaded_data.get("test_key"), "test_value_123")
         self.assertEqual(loaded_data.get("user_id"), "test-uuid-456")
 
-        # Cleanup
-        SecureStorage.clear_credentials()
+        # Cleanup / Restore original
+        if original_creds:
+            SecureStorage.save_credentials(original_creds)
+        else:
+            SecureStorage.clear_credentials()
 
     def test_autostart_check(self):
         # Should not raise exception
@@ -72,6 +78,8 @@ class TestKRTAgent(unittest.TestCase):
         self.assertIsNotNone(client.base_url)
         headers = client._get_headers(authenticated=False)
         self.assertIn("apikey", headers)
+        self.assertTrue(hasattr(client, "cleanup_stale_sessions"))
+        self.assertTrue(callable(client.cleanup_stale_sessions))
 
 if __name__ == "__main__":
     unittest.main()

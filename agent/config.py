@@ -42,7 +42,7 @@ except ImportError:
 # Application metadata
 APP_NAME = "KRT Bookings Tracker"
 APP_ID = "fr.krt.bookings.tracker"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 # GitHub Repository for Releases & Auto-Update
 GITHUB_REPO = os.environ.get(
