@@ -8,7 +8,7 @@ from agent.ui.theme import (
     BG_MAIN, BG_CARD, BG_CARD_HOVER, BORDER_COLOR, TEXT_PRIMARY,
     TEXT_SECONDARY, TEXT_MUTED, ACCENT_RED, ACCENT_RED_HOVER, ACCENT_BLUE,
     FONT_TITLE, FONT_SUBTITLE, FONT_BODY, FONT_BODY_BOLD, FONT_SMALL,
-    FONT_EYEBROW, apply_window_theme, get_krt_logo_tk
+    FONT_EYEBROW, apply_window_theme, center_window, get_krt_logo_tk
 )
 from agent.logger import logger
 
@@ -25,10 +25,11 @@ class ConfirmEndWorkModal:
         self.confirmed = False
 
         self.top = tk.Toplevel(self.parent)
-        apply_window_theme(self.top, title="Fin de journée — KRT Tracker", width=450, height=330)
+        apply_window_theme(self.top, title="Fin de journée — KRT Tracker")
         self.top.protocol("WM_DELETE_WINDOW", self._cancel)
 
         self._build_ui()
+        center_window(self.top, width=490, height=370)
 
     def _build_ui(self):
         container = tk.Frame(self.top, bg=BG_MAIN, padx=26, pady=24)

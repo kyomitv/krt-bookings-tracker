@@ -30,7 +30,9 @@ def generate_build_config(root_dir: Path) -> Path:
     config_file = root_dir / "agent" / "_build_config.py"
     supabase_url = os.environ.get("SUPABASE_URL", "")
     supabase_anon_key = os.environ.get("SUPABASE_ANON_KEY", "")
-    github_repo = os.environ.get("GITHUB_REPO", "krt-bookings/krt-bookings-tracker")
+    github_repo = os.environ.get("GITHUB_REPO", "kyomitv/krt-bookings-tracker")
+    from agent.config import APP_VERSION
+    app_version = os.environ.get("APP_VERSION", APP_VERSION)
 
     content = f'''"""
 Auto-generated baked build config.
@@ -39,6 +41,7 @@ BAKED_CONFIG = {{
     "SUPABASE_URL": "{supabase_url}",
     "SUPABASE_ANON_KEY": "{supabase_anon_key}",
     "GITHUB_REPO": "{github_repo}",
+    "APP_VERSION": "{app_version}",
 }}
 '''
     config_file.write_text(content, encoding="utf-8")
@@ -79,6 +82,7 @@ def build_executable():
         "--hidden-import=requests",
         "--hidden-import=PIL",
         "--hidden-import=tkinter",
+        "--hidden-import=agent.single_instance",
     ]
 
     if sys.platform == "win32" and icon_ico.exists():

@@ -9,7 +9,7 @@ from agent.ui.theme import (
     BG_MAIN, BG_CARD, BG_INPUT, BORDER_COLOR, BORDER_FOCUS, TEXT_PRIMARY,
     TEXT_SECONDARY, TEXT_MUTED, ACCENT_BLUE, ACCENT_BLUE_HOVER,
     ACCENT_RED, FONT_TITLE, FONT_SUBTITLE, FONT_BODY, FONT_BODY_BOLD,
-    FONT_SMALL, FONT_EYEBROW, apply_window_theme, get_krt_logo_tk
+    FONT_SMALL, FONT_EYEBROW, apply_window_theme, center_window, get_krt_logo_tk
 )
 from agent.autostart import AutostartManager
 from agent.logger import logger
@@ -24,10 +24,11 @@ class LoginWindow:
         self.auth_data: Optional[Dict[str, Any]] = None
 
         self.top = tk.Toplevel(self.parent)
-        apply_window_theme(self.top, title="Connexion — KRT Bookings Tracker", width=460, height=540)
+        apply_window_theme(self.top, title="Connexion — KRT Bookings Tracker")
         self.top.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._build_ui()
+        center_window(self.top, width=500, height=580)
 
     def set_client(self, client):
         self.client = client

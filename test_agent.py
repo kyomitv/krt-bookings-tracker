@@ -80,6 +80,63 @@ class TestKRTAgent(unittest.TestCase):
         self.assertIn("apikey", headers)
         self.assertTrue(hasattr(client, "cleanup_stale_sessions"))
         self.assertTrue(callable(client.cleanup_stale_sessions))
+        self.assertTrue(hasattr(client, "get_work_session"))
+
+    def test_remote_session_sync_logic(self):
+        from agent.agent import KRTTrackerAgent
+        import datetime
+        agent = KRTTrackerAgent()
+        agent.status = "active"
+        agent.start_time_str = "09:00"
+        agent.estimated_end_time_str = "17:30"
+
+        # Simulate web app updating started_at to 08:30 UTC
+        utc_time = "2026-09-30T06:30:00Z"
+        agent._sync_session_from_remote({"started_at": utc_time})
+
+        expected_local_dt = datetime.datetime.fromisoformat("2026-09-30T06:30:00+00:00").astimezone()
+        expected_start_str = expected_local_dt.strftime("%H:%M")
+        expected_end_str = (expected_local_dt + datetime.timedelta(hours=8, minutes=30)).strftime("%H:%M")
+
+        self.assertEqual(agent.start_time_str, expected_start_str)
+        self.assertEqual(agent.estimated_end_time_str, expected_end_str)
+        self.assertEqual(agent.session_start_time, expected_local_dt.timestamp())
+        agent.root.destroy()
+
+    def test_resume_existing_work_session(self):
+        from agent.agent import KRTTrackerAgent
+        import datetime
+        agent = KRTTrackerAgent()
+        sample_session = {
+            "id": "test-session-uuid-123",
+            "started_at": "2026-09-30T08:00:00Z",
+            "status": "paused",
+            "duration_seconds": 1800,
+        }
+        agent.resume_existing_work_session(sample_session)
+        self.assertEqual(agent.current_session_id, "test-session-uuid-123")
+        self.assertEqual(agent.status, "active")
+        expected_dt = datetime.datetime.fromisoformat("2026-09-30T08:00:00+00:00").astimezone()
+        self.assertEqual(agent.start_time_str, expected_dt.strftime("%H:%M"))
+        agent.root.destroy()
+
+    def test_single_instance_lock(self):
+        from agent.single_instance import SingleInstanceManager
+        lock1 = SingleInstanceManager(mutex_name="Local\\Test_SingleInstance_Mutex_1")
+        lock2 = SingleInstanceManager(mutex_name="Local\\Test_SingleInstance_Mutex_1")
+        try:
+            self.assertTrue(lock1.acquire())
+            # Second acquire on same mutex should fail
+            self.assertFalse(lock2.acquire())
+        finally:
+            lock1.release()
+            lock2.release()
+
+    def test_version_display_format(self):
+        from agent.config import APP_VERSION, APP_VERSION_DISPLAY
+        self.assertFalse(APP_VERSION.startswith("v"))
+        self.assertTrue(APP_VERSION_DISPLAY.startswith("v"))
+        self.assertEqual(APP_VERSION_DISPLAY, f"v{APP_VERSION}")
 
 if __name__ == "__main__":
     unittest.main()

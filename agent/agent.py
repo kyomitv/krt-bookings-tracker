@@ -9,7 +9,7 @@ import tkinter as tk
 from typing import Optional, Dict, Any
 
 from agent.config import (
-    APP_NAME, APP_VERSION, HEARTBEAT_INTERVAL_SECONDS,
+    APP_NAME, APP_VERSION, APP_VERSION_DISPLAY, HEARTBEAT_INTERVAL_SECONDS,
     UPDATE_CHECK_ON_STARTUP, UPDATE_CHECK_INTERVAL_SECONDS
 )
 from agent.crypto_storage import SecureStorage
@@ -28,13 +28,19 @@ from agent.logger import logger
 class KRTTrackerAgent:
     """Main Agent controller orchestrating UI, Supabase sync, systray, and time tracking."""
 
-    def __init__(self):
+    def __init__(self, single_instance_lock=None):
         logger.info("Initializing KRTTrackerAgent instance...")
+        self.single_instance_lock = single_instance_lock
         self.client = SupabaseClient()
         self.updater = AutoUpdater()
         self.systray = SystrayManager(self)
         self.dashboard: Optional[DashboardWindow] = None
         self._update_modal: Optional[UpdateModal] = None
+        self._active_modal = None
+
+        # Hook single-instance activation callback
+        if self.single_instance_lock:
+            self.single_instance_lock.set_activate_callback(lambda: self.root.after(0, self.bring_to_front))
 
         # State variables
         self.status = "idle" # "active", "paused", "personal", "completed", "idle"
@@ -54,8 +60,33 @@ class KRTTrackerAgent:
 
         # Tkinter Root
         self.root = tk.Tk()
-        apply_window_theme(self.root, title=APP_NAME)
+        self.root.title("_KRT_INTERNAL_ROOT_")
         self.root.withdraw() # Main root is hidden, child dialogs/dashboard are Toplevels
+
+    def bring_to_front(self):
+        """Brings the primary active window to the front cleanly without Win32 hacks."""
+        try:
+            logger.info("bring_to_front triggered - restoring UI.")
+            if self._update_modal and self._update_modal.top.winfo_exists():
+                self._update_modal.top.deiconify()
+                self._update_modal.top.lift()
+                self._update_modal.top.focus_force()
+                return
+
+            if self.dashboard and self.dashboard.top.winfo_exists():
+                self.dashboard.show()
+                return
+
+            if self._active_modal and hasattr(self._active_modal, "top") and self._active_modal.top.winfo_exists():
+                self._active_modal.top.deiconify()
+                self._active_modal.top.lift()
+                self._active_modal.top.focus_force()
+                return
+
+            if self.client.is_authenticated():
+                self.show_dashboard()
+        except Exception as e:
+            logger.warning(f"Error in bring_to_front: {e}")
 
     def _keepalive(self):
         """Periodic keepalive to ensure Tkinter message loop stays responsive."""
@@ -102,7 +133,69 @@ class KRTTrackerAgent:
             return f"{diff}s"
         return f"{diff // 60}m"
 
+    # ==================== REMOTE SYNC ====================
+
+    def _sync_session_from_remote(self, session_data: Dict[str, Any]):
+        """Synchronizes remote session properties (e.g. started_at modified from web app)."""
+        if not session_data:
+            return
+
+        remote_started_at = session_data.get("started_at")
+        if remote_started_at:
+            try:
+                clean_str = remote_started_at.replace("Z", "+00:00")
+                dt = datetime.datetime.fromisoformat(clean_str).astimezone()
+                new_start_str = dt.strftime("%H:%M")
+                new_estimated_end = (dt + datetime.timedelta(hours=8, minutes=30)).strftime("%H:%M")
+
+                if new_start_str != self.start_time_str or new_estimated_end != self.estimated_end_time_str:
+                    logger.info(f"Detected remote start_at update: {self.start_time_str} -> {new_start_str}")
+                    self.start_time_str = new_start_str
+                    self.estimated_end_time_str = new_estimated_end
+
+                    # If session is active and user altered start time from web, realign live timer origin
+                    if self.status == "active":
+                        self.session_start_time = dt.timestamp()
+                        self.accumulated_seconds = 0
+            except Exception as e:
+                logger.warning(f"Error syncing remote started_at: {e}")
+
     # ==================== WORKFLOW ACTIONS ====================
+
+    def resume_existing_work_session(self, session_data: Dict[str, Any]):
+        """Resumes an existing unclosed work session from today."""
+        self.current_session_id = session_data.get("id")
+        logger.info(f"Resuming existing work session ID: {self.current_session_id}...")
+        self.status = "active"
+        self.is_connected = True
+
+        remote_started_at = session_data.get("started_at")
+        if remote_started_at:
+            try:
+                clean_str = remote_started_at.replace("Z", "+00:00")
+                dt = datetime.datetime.fromisoformat(clean_str).astimezone()
+                self.start_time_str = dt.strftime("%H:%M")
+                self.estimated_end_time_str = (dt + datetime.timedelta(hours=8, minutes=30)).strftime("%H:%M")
+                self.session_start_time = dt.timestamp()
+                self.accumulated_seconds = 0
+            except Exception as e:
+                logger.warning(f"Error parsing started_at in resume: {e}")
+                now_dt = datetime.datetime.now()
+                self.start_time_str = now_dt.strftime("%H:%M")
+                self.estimated_end_time_str = (now_dt + datetime.timedelta(hours=8, minutes=30)).strftime("%H:%M")
+                self.session_start_time = time.time()
+                self.accumulated_seconds = session_data.get("duration_seconds", 0)
+        else:
+            now_dt = datetime.datetime.now()
+            self.start_time_str = now_dt.strftime("%H:%M")
+            self.estimated_end_time_str = (now_dt + datetime.timedelta(hours=8, minutes=30)).strftime("%H:%M")
+            self.session_start_time = time.time()
+            self.accumulated_seconds = session_data.get("duration_seconds", 0)
+
+        # Notify Supabase of resume
+        self.client.resume_session(self.current_session_id)
+        self.last_heartbeat_time = time.time()
+        self.systray.update_icon()
 
     def start_work(self):
         """Starts a pro work session with Supabase sync."""
@@ -123,6 +216,7 @@ class KRTTrackerAgent:
             self.current_session_id = session.get("id")
             self.is_connected = True
             logger.info(f"Active session ID: {self.current_session_id}")
+            self._sync_session_from_remote(session)
         else:
             logger.warning(f"Failed to create session on Supabase: {err}")
             self.is_connected = False
@@ -200,6 +294,8 @@ class KRTTrackerAgent:
         self.status = "completed"
         self._running = False
         self.systray.stop()
+        if self.single_instance_lock:
+            self.single_instance_lock.release()
         try:
             self.root.destroy()
         except Exception:
@@ -209,19 +305,21 @@ class KRTTrackerAgent:
     # ==================== BACKGROUND HEARTBEAT ====================
 
     def _heartbeat_worker(self):
-        """Background thread sending heartbeats every HEARTBEAT_INTERVAL_SECONDS."""
+        """Background thread sending heartbeats and syncing session changes from web app."""
         logger.info(f"Heartbeat thread started (interval={HEARTBEAT_INTERVAL_SECONDS}s).")
         while self._running:
             time.sleep(HEARTBEAT_INTERVAL_SECONDS)
             if not self._running:
                 break
 
-            if self.status == "active" and self.current_session_id:
+            if self.status in ("active", "paused") and self.current_session_id:
                 elapsed = self.get_current_session_seconds()
-                success = self.client.send_heartbeat(self.current_session_id, elapsed)
+                success, session_data = self.client.send_heartbeat(self.current_session_id, elapsed)
                 self.is_connected = success
                 if success:
                     self.last_heartbeat_time = time.time()
+                    if session_data:
+                        self._sync_session_from_remote(session_data)
                 else:
                     logger.warning("Heartbeat failed, will retry next cycle.")
 
@@ -251,7 +349,7 @@ class KRTTrackerAgent:
                 def show_up_to_date():
                     self._show_info_popup(
                         "KRT Bookings Tracker",
-                        f"Vous utilisez déjà la dernière version disponible (v{APP_VERSION})."
+                        f"Vous utilisez déjà la dernière version disponible ({APP_VERSION_DISPLAY})."
                     )
                 self.root.after(0, show_up_to_date)
 
@@ -260,26 +358,34 @@ class KRTTrackerAgent:
 
     def _show_info_popup(self, title: str, message: str):
         """Displays a lightweight themed popup for informative messages."""
-        top = tk.Toplevel(self.root)
-        top.title(title)
-        top.configure(bg="#0F172A")
-        top.resizable(False, False)
+        parent_win = self.dashboard.top if (self.dashboard and self.dashboard.top.winfo_exists() and self.dashboard._is_visible) else self.root
+        top = tk.Toplevel(parent_win)
+        from agent.ui.theme import (
+            apply_window_theme, center_window, BG_MAIN, BG_CARD, BG_CARD_HOVER,
+            TEXT_PRIMARY, TEXT_SECONDARY, ACCENT_GREEN,
+            FONT_TITLE, FONT_BODY, FONT_SMALL
+        )
+        apply_window_theme(top, title=title, resizable=False)
         top.attributes("-topmost", True)
-        from agent.ui.theme import center_window
-        center_window(top, 380, 160)
-        top.transient(self.root)
+        if parent_win != self.root:
+            top.transient(parent_win)
 
-        frame = tk.Frame(top, bg="#0F172A", padx=20, pady=20)
+        frame = tk.Frame(top, bg=BG_MAIN, padx=24, pady=20)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(frame, text="✅ À jour", font=("Segoe UI", 12, "bold"), fg="#10B981", bg="#0F172A").pack(anchor="w")
-        tk.Label(frame, text=message, font=("Segoe UI", 9), fg="#94A3B8", bg="#0F172A", wraplength=340, justify="left").pack(anchor="w", pady=(8, 14))
+        tk.Label(frame, text="✅ À jour", font=FONT_TITLE, fg=ACCENT_GREEN, bg=BG_MAIN).pack(anchor="w")
+        tk.Label(frame, text=message, font=FONT_BODY, fg=TEXT_SECONDARY, bg=BG_MAIN, wraplength=420, justify="left").pack(anchor="w", pady=(8, 16))
 
         tk.Button(
-            frame, text="Fermer", font=("Segoe UI", 9, "bold"),
-            bg="#1E293B", fg="#F8FAFC", relief=tk.FLAT, cursor="hand2",
-            padx=16, pady=4, command=top.destroy
+            frame, text="Fermer", font=FONT_SMALL,
+            bg=BG_CARD, fg=TEXT_PRIMARY, activebackground=BG_CARD_HOVER, activeforeground=TEXT_PRIMARY,
+            relief=tk.FLAT, cursor="hand2", padx=18, pady=6, command=top.destroy
         ).pack(side=tk.RIGHT)
+
+        center_window(top, width=480, height=220)
+        top.deiconify()
+        top.lift()
+        top.focus_force()
 
     def _prepare_restart(self):
         """Prepares the agent for update restart by closing active sessions/threads cleanly."""
@@ -289,6 +395,8 @@ class KRTTrackerAgent:
             self.client.pause_session(self.current_session_id, elapsed)
         self._running = False
         self.systray.stop()
+        if self.single_instance_lock:
+            self.single_instance_lock.release()
 
     # ==================== UI OPENERS ====================
 
@@ -326,7 +434,9 @@ class KRTTrackerAgent:
                 client=self.client,
                 on_success=lambda data: SecureStorage.save_credentials(data),
             )
+            self._active_modal = login_win
             auth_data = login_win.show_modal()
+            self._active_modal = None
 
             # Verify if login was successful
             if not self.client.user_id:
@@ -338,23 +448,31 @@ class KRTTrackerAgent:
         if not AutostartManager.is_enabled():
             AutostartManager.enable()
 
-        # 4. Clean up any unclosed / stale sessions from previous unexpected shutdowns or connection losses
-        self.client.cleanup_stale_sessions()
+        # 4. Clean up any unclosed sessions from previous days (older than today)
+        self.client.cleanup_stale_sessions(exclude_today=True)
 
-        # 5. Fetch today's summary
+        # 5. Check if an unclosed session from today exists to propose resuming
+        pending_session = self.client.get_today_unclosed_session()
+
+        # 6. Fetch today's summary
         summary = self.client.get_today_summary()
         self.today_prior_seconds = summary.get("total_seconds", 0)
 
-        # 6. Startup Session Qualification Modal
+        # 7. Startup Session Qualification Modal
         user_name = self.get_user_display_name().split()[0]
-        logger.info(f"Opening startup qualification modal for {user_name}...")
+        logger.info(f"Opening startup qualification modal for {user_name} (pending_session={'yes' if pending_session else 'no'})...")
         startup_modal = StartupModal(
             parent=self.root,
             user_name=user_name,
+            resumable_session=pending_session,
         )
+        self._active_modal = startup_modal
         choice = startup_modal.show_modal()
+        self._active_modal = None
 
-        if choice == "work":
+        if choice == "resume" and pending_session:
+            self.resume_existing_work_session(pending_session)
+        elif choice in ("work", "new_work"):
             self.start_work()
         else:
             self.start_personal_mode()

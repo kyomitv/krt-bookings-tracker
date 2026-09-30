@@ -9,7 +9,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Optional, Callable
 
-from agent.config import APP_VERSION
+from agent.config import APP_VERSION, APP_VERSION_DISPLAY
 from agent.updater import ReleaseInfo, AutoUpdater
 from agent.ui.theme import (
     BG_MAIN, BG_CARD, BG_CARD_HOVER, BG_INPUT, BORDER_COLOR,
@@ -17,7 +17,7 @@ from agent.ui.theme import (
     ACCENT_BLUE_HOVER, ACCENT_GREEN, ACCENT_GREEN_HOVER,
     ACCENT_RED, FONT_TITLE, FONT_SUBTITLE, FONT_BODY,
     FONT_BODY_BOLD, FONT_SMALL, FONT_EYEBROW, FONT_BADGE,
-    apply_window_theme, get_krt_logo_tk
+    apply_window_theme, center_window, get_krt_logo_tk
 )
 from agent.logger import logger
 
@@ -33,13 +33,14 @@ class UpdateModal:
         self.is_downloading = False
 
         self.top = tk.Toplevel(self.parent)
-        apply_window_theme(self.top, title=f"Mise à jour disponible — {self.release_info.tag_name}", width=520, height=500)
+        apply_window_theme(self.top, title=f"Mise à jour disponible — {self.release_info.tag_name}")
         self.top.attributes("-topmost", True)
 
         # Modal grab
         self.top.transient(self.parent)
 
         self._build_ui()
+        center_window(self.top, width=580, height=560)
 
     def _build_ui(self):
         container = tk.Frame(self.top, bg=BG_MAIN, padx=24, pady=20)
@@ -64,7 +65,7 @@ class UpdateModal:
 
         curr_badge = tk.Label(
             tags_frame,
-            text=f"v{APP_VERSION}",
+            text=f"{APP_VERSION_DISPLAY}",
             font=FONT_BADGE,
             bg=BG_CARD,
             fg=TEXT_SECONDARY,

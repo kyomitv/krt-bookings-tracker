@@ -151,16 +151,42 @@ class SupabaseClient:
 
     # ==================== WORK SESSIONS ====================
 
-    def cleanup_stale_sessions(self) -> int:
+    def get_today_unclosed_session(self) -> Optional[Dict[str, Any]]:
+        """
+        Checks if there is an unclosed session ('active' or 'paused') started TODAY for the user.
+        """
+        if not self.user_id:
+            return None
+
+        today_start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+        url = f"{self.base_url}/rest/v1/hr_work_sessions?user_id=eq.{self.user_id}&status=in.(active,paused)&started_at=gte.{today_start}&order=started_at.desc&limit=1&select=*"
+        try:
+            resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
+            if resp.status_code == 200:
+                rows = resp.json()
+                if rows and isinstance(rows, list):
+                    return rows[0]
+            return None
+        except Exception as e:
+            logger.warning(f"Error checking today unclosed session: {e}")
+            return None
+
+    def cleanup_stale_sessions(self, exclude_today: bool = False) -> int:
         """
         Closes any unclosed/dangling sessions ('active' or 'paused') for the current user
         by marking them as 'cancelled' (failed/interrupted due to connection loss or abrupt shutdown).
+        If exclude_today is True, only closes sessions started before today.
         Returns the number of closed sessions.
         """
         if not self.user_id:
             return 0
 
-        url = f"{self.base_url}/rest/v1/hr_work_sessions?user_id=eq.{self.user_id}&status=in.(active,paused)&select=id,last_heartbeat_at,updated_at,started_at,duration_seconds,notes"
+        url = f"{self.base_url}/rest/v1/hr_work_sessions?user_id=eq.{self.user_id}&status=in.(active,paused)"
+        if exclude_today:
+            today_start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+            url += f"&started_at=lt.{today_start}"
+        url += "&select=id,last_heartbeat_at,updated_at,started_at,duration_seconds,notes"
+
         try:
             resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
             if resp.status_code != 200:
@@ -171,7 +197,7 @@ class SupabaseClient:
             if not stale_sessions:
                 return 0
 
-            logger.info(f"Found {len(stale_sessions)} stale/unclosed session(s). Closing them...")
+            logger.info(f"Found {len(stale_sessions)} stale/unclosed session(s) (exclude_today={exclude_today}). Closing them...")
             closed_count = 0
             now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -249,12 +275,29 @@ class SupabaseClient:
             logger.error(f"Exception during start_work_session: {e}")
             return False, f"Erreur réseau: {e}", None
 
-    def send_heartbeat(self, session_id: str, elapsed_seconds: int) -> bool:
+    def get_work_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Fetches the latest work session record from Supabase."""
+        if not session_id or not self.user_id:
+            return None
+        url = f"{self.base_url}/rest/v1/hr_work_sessions?id=eq.{session_id}&select=*"
+        try:
+            resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
+            if resp.status_code == 200:
+                rows = resp.json()
+                if rows and isinstance(rows, list):
+                    return rows[0]
+            return None
+        except Exception as e:
+            logger.warning(f"Error fetching work session {session_id}: {e}")
+            return None
+
+    def send_heartbeat(self, session_id: str, elapsed_seconds: int) -> Tuple[bool, Optional[Dict[str, Any]]]:
         """
         Updates session's last_heartbeat_at timestamp and duration.
+        Returns (success, updated_session_data).
         """
         if not session_id or not self.user_id:
-            return False
+            return False, None
 
         now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         url = f"{self.base_url}/rest/v1/hr_work_sessions?id=eq.{session_id}"
@@ -263,17 +306,27 @@ class SupabaseClient:
             "duration_seconds": elapsed_seconds,
             "updated_at": now_iso,
         }
+        headers = self._get_headers(authenticated=True)
+        headers["Prefer"] = "return=representation"
         try:
-            resp = requests.patch(url, headers=self._get_headers(authenticated=True), json=payload, timeout=8)
+            resp = requests.patch(url, headers=headers, json=payload, timeout=8)
             success = resp.status_code in (200, 204)
+            data = None
+            if success and resp.text:
+                try:
+                    rows = resp.json()
+                    if isinstance(rows, list) and rows:
+                        data = rows[0]
+                except Exception:
+                    pass
             if success:
                 logger.debug(f"Heartbeat sent for session {session_id} (elapsed={elapsed_seconds}s)")
             else:
                 logger.warning(f"Heartbeat failed with status {resp.status_code}: {resp.text}")
-            return success
+            return success, data
         except Exception as e:
             logger.error(f"Heartbeat exception: {e}")
-            return False
+            return False, None
 
     def pause_session(self, session_id: str, elapsed_seconds: int) -> bool:
         """Pauses the current active work session."""

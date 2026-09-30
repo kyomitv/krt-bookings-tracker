@@ -42,15 +42,15 @@ ACCENT_RED_HOVER = "#BE123C"
 ACCENT_PURPLE = "#8B5CF6"
 
 # Fonts
-FONT_FAMILY = "Figtree" if "Figtree" in ("Figtree",) else ("Segoe UI" if sys.platform == "win32" else "Helvetica")
-FONT_TITLE = (FONT_FAMILY, 16, "bold")
-FONT_SUBTITLE = (FONT_FAMILY, 12, "bold")
-FONT_BODY = (FONT_FAMILY, 10)
-FONT_BODY_BOLD = (FONT_FAMILY, 10, "bold")
-FONT_SMALL = (FONT_FAMILY, 9)
-FONT_EYEBROW = (FONT_FAMILY, 8, "bold")
-FONT_TIMER = (FONT_FAMILY, 32, "bold")
-FONT_BADGE = (FONT_FAMILY, 9, "bold")
+FONT_FAMILY = "Segoe UI" if sys.platform == "win32" else "Helvetica"
+FONT_TITLE = (FONT_FAMILY, 20, "bold")
+FONT_SUBTITLE = (FONT_FAMILY, 15, "bold")
+FONT_BODY = (FONT_FAMILY, 13)
+FONT_BODY_BOLD = (FONT_FAMILY, 13, "bold")
+FONT_SMALL = (FONT_FAMILY, 12)
+FONT_EYEBROW = (FONT_FAMILY, 11, "bold")
+FONT_TIMER = (FONT_FAMILY, 46, "bold")
+FONT_BADGE = (FONT_FAMILY, 12, "bold")
 
 # Global icon cache to prevent garbage collection in Tkinter
 _ICON_PHOTO_CACHE = {}
@@ -67,13 +67,22 @@ def get_asset_path(filename: str) -> Path:
 
 
 def apply_windows_app_id():
-    """Sets explicit AppUserModelID on Windows to ensure correct taskbar grouping & icon."""
+    """Sets explicit AppUserModelID and DPI awareness on Windows to ensure crisp rendering and taskbar grouping."""
     if sys.platform == "win32":
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("krt.studios.bookings.tracker")
         except Exception:
             pass
+        try:
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try:
+                import ctypes
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
 
 
 def get_app_icon_photo() -> Optional[ImageTk.PhotoImage]:
@@ -121,14 +130,26 @@ def get_krt_logo_tk(target_height: int = 24) -> Optional[ImageTk.PhotoImage]:
     return None
 
 
-def center_window(window: tk.Toplevel | tk.Tk, width: int, height: int):
-    """Centers a tkinter window on screen."""
+def center_window(window: tk.Toplevel | tk.Tk, width: Optional[int] = None, height: Optional[int] = None):
+    """Centers a tkinter window on screen, ensuring it fits its content without cropping."""
     window.update_idletasks()
+    req_w = window.winfo_reqwidth()
+    req_h = window.winfo_reqheight()
+
+    final_w = max(width or 0, req_w)
+    final_h = max(height or 0, req_h)
+
+    # Extra margin if calculated from widgets
+    if height is None or final_h > height:
+        final_h += 10
+    if width is None or final_w > width:
+        final_w += 10
+
     screen_width = window.winfo_screenwidth()
     screen_height = window.winfo_screenheight()
-    x = max(0, (screen_width // 2) - (width // 2))
-    y = max(0, (screen_height // 2) - (height // 2))
-    window.geometry(f"{width}x{height}+{x}+{y}")
+    x = max(0, (screen_width // 2) - (final_w // 2))
+    y = max(0, (screen_height // 2) - (final_h // 2))
+    window.geometry(f"{final_w}x{final_h}+{x}+{y}")
 
 
 def apply_window_theme(
@@ -165,4 +186,5 @@ def apply_window_theme(
 
     if width and height:
         center_window(window, width, height)
+
 
