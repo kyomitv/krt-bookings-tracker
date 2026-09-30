@@ -6,20 +6,46 @@ import platform
 import socket
 import datetime
 import requests
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Callable
 from agent.config import SUPABASE_URL, SUPABASE_ANON_KEY
 from agent.logger import logger
+import time
 
 class SupabaseClient:
     """Direct lightweight client for Supabase REST API & GoTrue Auth."""
 
-    def __init__(self, access_token: Optional[str] = None, refresh_token: Optional[str] = None, user_id: Optional[str] = None):
+    def __init__(
+        self,
+        access_token: Optional[str] = None,
+        refresh_token: Optional[str] = None,
+        user_id: Optional[str] = None,
+        on_tokens_updated: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ):
         self.base_url = SUPABASE_URL.rstrip("/")
         self.anon_key = SUPABASE_ANON_KEY
         self.access_token = access_token
         self.refresh_token = refresh_token
         self.user_id = user_id
         self.user_profile: Optional[Dict[str, Any]] = None
+        self.on_tokens_updated = on_tokens_updated
+
+    def is_authenticated(self) -> bool:
+        """Checks if current client has valid user_id and tokens."""
+        return bool(self.user_id and (self.access_token or self.refresh_token))
+
+    def _notify_tokens_updated(self):
+        """Notifies callback whenever authentication tokens or profile change."""
+        if self.on_tokens_updated and self.user_id:
+            try:
+                self.on_tokens_updated({
+                    "access_token": self.access_token,
+                    "refresh_token": self.refresh_token,
+                    "user_id": self.user_id,
+                    "email": self.user_profile.get("email") if self.user_profile else None,
+                    "profile": self.user_profile,
+                })
+            except Exception as e:
+                logger.warning(f"Error in on_tokens_updated callback: {e}")
 
     def _get_headers(self, authenticated: bool = True) -> Dict[str, str]:
         headers = {
@@ -65,13 +91,15 @@ class SupabaseClient:
                 logger.info(f"Login successful for user_id: {self.user_id}")
                 # Fetch detailed profile
                 self.fetch_profile()
-                return True, None, {
+                auth_data = {
                     "access_token": self.access_token,
                     "refresh_token": self.refresh_token,
                     "user_id": self.user_id,
                     "email": email,
                     "profile": self.user_profile,
                 }
+                self._notify_tokens_updated()
+                return True, None, auth_data
             else:
                 try:
                     error_data = resp.json()
@@ -85,7 +113,7 @@ class SupabaseClient:
             return False, f"Erreur de connexion réseau : {e}", None
 
     def refresh_session(self) -> bool:
-        """Refreshes the auth session using the refresh token."""
+        """Refreshes the auth session using the refresh token and persists rotated tokens."""
         if not self.refresh_token:
             return False
         logger.info("Refreshing auth session token...")
@@ -98,8 +126,10 @@ class SupabaseClient:
                 self.access_token = data.get("access_token")
                 self.refresh_token = data.get("refresh_token")
                 user = data.get("user", {})
-                self.user_id = user.get("id")
-                logger.info("Session refreshed successfully.")
+                if user.get("id"):
+                    self.user_id = user.get("id")
+                logger.info("Session refreshed successfully. Saving rotated tokens.")
+                self._notify_tokens_updated()
                 return True
             logger.warning(f"Failed to refresh session: {resp.status_code} {resp.text}")
             return False
@@ -108,31 +138,57 @@ class SupabaseClient:
             return False
 
     def verify_token(self) -> bool:
-        """Verifies if current access token is valid by querying user endpoint."""
-        if not self.access_token:
-            return False
-        logger.info("Verifying access token...")
-        url = f"{self.base_url}/auth/v1/user"
-        try:
-            resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
-            if resp.status_code == 200:
-                user_data = resp.json()
-                self.user_id = user_data.get("id")
-                self.fetch_profile()
-                logger.info(f"Token verified for user_id: {self.user_id}")
-                return True
-            logger.info("Token expired or invalid, trying refresh...")
-            # Try to refresh token
-            if self.refresh_session():
-                self.fetch_profile()
-                return True
-            return False
-        except Exception as e:
-            logger.error(f"Error verifying token: {e}")
+        """
+        Verifies if current access token is valid by querying user endpoint.
+        Includes retry logic for network delays at boot, and fallback token refresh.
+        """
+        if not self.access_token and not self.refresh_token:
             return False
 
+        logger.info("Verifying access token...")
+        url = f"{self.base_url}/auth/v1/user"
+
+        for attempt in range(3):
+            try:
+                if self.access_token:
+                    resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
+                    if resp.status_code == 200:
+                        user_data = resp.json()
+                        self.user_id = user_data.get("id")
+                        self.fetch_profile()
+                        logger.info(f"Token verified for user_id: {self.user_id}")
+                        return True
+                    elif resp.status_code in (401, 403):
+                        logger.info("Access token expired or rejected, attempting refresh...")
+                        if self.refresh_session():
+                            self.fetch_profile()
+                            return True
+                        logger.warning("Token refresh rejected by auth server.")
+                        return False
+                else:
+                    # No access token but have refresh token
+                    if self.refresh_session():
+                        self.fetch_profile()
+                        return True
+                    return False
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as net_err:
+                logger.warning(f"Network delay during token verification (attempt {attempt + 1}/3): {net_err}")
+                if attempt < 2:
+                    time.sleep(1.5)
+                else:
+                    # If still offline after 3 attempts, trust stored credentials rather than forcing logout
+                    if self.user_id:
+                        logger.info("Operating in offline mode with cached credentials.")
+                        return True
+                    return False
+            except Exception as e:
+                logger.error(f"Error verifying token: {e}")
+                return False
+
+        return False
+
     def fetch_profile(self) -> Optional[Dict[str, Any]]:
-        """Fetch user profile from public.profiles table."""
+        """Fetch user profile from public.profiles table and update cached profile."""
         if not self.user_id:
             return None
         url = f"{self.base_url}/rest/v1/profiles?id=eq.{self.user_id}&select=*"
@@ -143,10 +199,11 @@ class SupabaseClient:
                 if rows and len(rows) > 0:
                     self.user_profile = rows[0]
                     logger.info(f"Profile loaded: {self.user_profile.get('first_name')} {self.user_profile.get('last_name')}")
+                    self._notify_tokens_updated()
                     return self.user_profile
             return None
         except Exception as e:
-            logger.error(f"Error fetching profile: {e}")
+            logger.warning(f"Error fetching profile: {e}")
             return None
 
     # ==================== WORK SESSIONS ====================
@@ -174,7 +231,7 @@ class SupabaseClient:
     def cleanup_stale_sessions(self, exclude_today: bool = False) -> int:
         """
         Closes any unclosed/dangling sessions ('active' or 'paused') for the current user
-        by marking them as 'cancelled' (failed/interrupted due to connection loss or abrupt shutdown).
+        by marking them as 'completed' (finalizing session from shutdown/poweroff).
         If exclude_today is True, only closes sessions started before today.
         Returns the number of closed sessions.
         """
@@ -197,7 +254,7 @@ class SupabaseClient:
             if not stale_sessions:
                 return 0
 
-            logger.info(f"Found {len(stale_sessions)} stale/unclosed session(s) (exclude_today={exclude_today}). Closing them...")
+            logger.info(f"Found {len(stale_sessions)} stale/unclosed session(s) (exclude_today={exclude_today}). Finalizing them as completed...")
             closed_count = 0
             now_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -207,12 +264,12 @@ class SupabaseClient:
                     continue
                 ended_at = s.get("last_heartbeat_at") or s.get("updated_at") or now_iso
                 existing_notes = s.get("notes") or ""
-                note_suffix = "[Clôturée en échec - perte de connexion ou arrêt inopiné]"
+                note_suffix = "[Clôturée automatiquement à l'extinction du PC]"
                 new_notes = f"{existing_notes} {note_suffix}".strip() if existing_notes else note_suffix
 
                 patch_url = f"{self.base_url}/rest/v1/hr_work_sessions?id=eq.{sid}"
                 patch_payload = {
-                    "status": "cancelled",
+                    "status": "completed",
                     "ended_at": ended_at,
                     "notes": new_notes,
                     "updated_at": now_iso,
@@ -220,11 +277,11 @@ class SupabaseClient:
                 patch_resp = requests.patch(patch_url, headers=self._get_headers(authenticated=True), json=patch_payload, timeout=8)
                 if patch_resp.status_code in (200, 204):
                     closed_count += 1
-                    self.log_activity(sid, "SESSION_CLOSED_ON_RECOVERY", {
-                        "reason": "unclosed_session_cleanup",
+                    self.log_activity(sid, "SESSION_CLOSED_ON_SHUTDOWN", {
+                        "reason": "unclosed_session_auto_close",
                         "ended_at": ended_at
                     })
-                    logger.info(f"Stale session {sid} closed as 'cancelled' (ended_at={ended_at})")
+                    logger.info(f"Stale session {sid} finalized as 'completed' (ended_at={ended_at})")
                 else:
                     logger.warning(f"Failed to close stale session {sid}: {patch_resp.status_code} {patch_resp.text}")
 

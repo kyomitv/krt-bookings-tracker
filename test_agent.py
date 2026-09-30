@@ -101,6 +101,7 @@ class TestKRTAgent(unittest.TestCase):
         self.assertEqual(agent.start_time_str, expected_start_str)
         self.assertEqual(agent.estimated_end_time_str, expected_end_str)
         self.assertEqual(agent.session_start_time, expected_local_dt.timestamp())
+        agent._has_shutdown = True
         agent.root.destroy()
 
     def test_resume_existing_work_session(self):
@@ -118,6 +119,7 @@ class TestKRTAgent(unittest.TestCase):
         self.assertEqual(agent.status, "active")
         expected_dt = datetime.datetime.fromisoformat("2026-09-30T08:00:00+00:00").astimezone()
         self.assertEqual(agent.start_time_str, expected_dt.strftime("%H:%M"))
+        agent._has_shutdown = True
         agent.root.destroy()
 
     def test_single_instance_lock(self):
@@ -132,6 +134,59 @@ class TestKRTAgent(unittest.TestCase):
             lock1.release()
             lock2.release()
 
+    def test_auth_and_token_rotation_callback(self):
+        saved_creds = []
+        client = SupabaseClient(on_tokens_updated=lambda d: saved_creds.append(d))
+        client.user_id = "test-user-123"
+        client.access_token = "access-token-abc"
+        client.refresh_token = "refresh-token-xyz"
+        self.assertTrue(client.is_authenticated())
+
+        # Simulate profile update / token rotation
+        client.user_profile = {"email": "tech@krt.fr", "first_name": "Tech", "last_name": "Test"}
+        client._notify_tokens_updated()
+
+        self.assertTrue(len(saved_creds) > 0)
+        self.assertEqual(saved_creds[-1]["access_token"], "access-token-abc")
+        self.assertEqual(saved_creds[-1]["refresh_token"], "refresh-token-xyz")
+        self.assertEqual(saved_creds[-1]["profile"]["first_name"], "Tech")
+
+    def test_shutdown_cleanup_logic(self):
+        from agent.agent import KRTTrackerAgent
+        agent = KRTTrackerAgent()
+        agent.status = "active"
+        agent.current_session_id = "test-session-shutdown-id"
+        agent.session_start_time = 1000.0
+
+        # Mock client end_work_session
+        ended_sessions = []
+        agent.client.end_work_session = lambda sid, sec, notes="": ended_sessions.append((sid, sec, notes))
+
+        agent.shutdown_cleanup()
+
+        self.assertTrue(agent._has_shutdown)
+        self.assertEqual(agent.status, "completed")
+        self.assertEqual(len(ended_sessions), 1)
+        self.assertEqual(ended_sessions[0][0], "test-session-shutdown-id")
+        self.assertIn("extinction du PC", ended_sessions[0][2])
+        agent.root.destroy()
+
+    def test_connection_alert_modal(self):
+        from agent.agent import KRTTrackerAgent
+        from agent.ui.connection_alert_modal import ConnectionAlertModal
+        agent = KRTTrackerAgent()
+
+        restart_called = []
+        modal = ConnectionAlertModal(
+            parent=agent.root,
+            on_restart=lambda: restart_called.append(True),
+        )
+        self.assertIsNotNone(modal.top)
+        modal._restart()
+        self.assertTrue(len(restart_called) > 0)
+        agent._has_shutdown = True
+        agent.root.destroy()
+
     def test_version_display_format(self):
         from agent.config import APP_VERSION, APP_VERSION_DISPLAY
         self.assertFalse(APP_VERSION.startswith("v"))
@@ -140,3 +195,5 @@ class TestKRTAgent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+

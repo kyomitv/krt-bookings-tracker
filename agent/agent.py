@@ -21,6 +21,7 @@ from agent.ui.login_view import LoginWindow
 from agent.ui.startup_modal import StartupModal
 from agent.ui.dashboard_view import DashboardWindow
 from agent.ui.confirm_modal import ConfirmEndWorkModal
+from agent.ui.connection_alert_modal import ConnectionAlertModal
 from agent.ui.update_modal import UpdateModal
 from agent.ui.theme import apply_window_theme
 from agent.logger import logger
@@ -31,12 +32,17 @@ class KRTTrackerAgent:
     def __init__(self, single_instance_lock=None):
         logger.info("Initializing KRTTrackerAgent instance...")
         self.single_instance_lock = single_instance_lock
-        self.client = SupabaseClient()
+        self.client = SupabaseClient(
+            on_tokens_updated=lambda data: SecureStorage.save_credentials(data)
+        )
         self.updater = AutoUpdater()
         self.systray = SystrayManager(self)
         self.dashboard: Optional[DashboardWindow] = None
         self._update_modal: Optional[UpdateModal] = None
+        self._connection_alert_modal: Optional[ConnectionAlertModal] = None
         self._active_modal = None
+        self._has_shutdown = False
+        self._consecutive_heartbeat_failures = 0
 
         # Hook single-instance activation callback
         if self.single_instance_lock:
@@ -58,6 +64,9 @@ class KRTTrackerAgent:
         self._running = True
         self._heartbeat_thread: Optional[threading.Thread] = None
 
+        # Register shutdown & signal handlers (for automatic session close on PC power off)
+        self._setup_shutdown_handlers()
+
         # Tkinter Root
         self.root = tk.Tk()
         self.root.title("_KRT_INTERNAL_ROOT_")
@@ -67,6 +76,10 @@ class KRTTrackerAgent:
         """Brings the primary active window to the front cleanly without Win32 hacks."""
         try:
             logger.info("bring_to_front triggered - restoring UI.")
+            if self._connection_alert_modal and self._connection_alert_modal.top.winfo_exists():
+                self._connection_alert_modal.show()
+                return
+
             if self._update_modal and self._update_modal.top.winfo_exists():
                 self._update_modal.top.deiconify()
                 self._update_modal.top.lift()
@@ -284,23 +297,126 @@ class KRTTrackerAgent:
         if confirmed:
             self._execute_end_work_and_quit()
 
+    def _setup_shutdown_handlers(self):
+        """Registers OS and process handlers for system shutdown, logoff, and termination."""
+        import atexit
+        import signal
+
+        atexit.register(self.shutdown_cleanup)
+
+        try:
+            signal.signal(signal.SIGINT, lambda s, f: self._signal_handler("SIGINT"))
+            signal.signal(signal.SIGTERM, lambda s, f: self._signal_handler("SIGTERM"))
+            if hasattr(signal, "SIGBREAK"):
+                signal.signal(signal.SIGBREAK, lambda s, f: self._signal_handler("SIGBREAK"))
+        except Exception as e:
+            logger.debug(f"Signal registration note: {e}")
+
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                HandlerRoutine = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
+
+                def win_console_handler(ctrl_type):
+                    # 0: CTRL_C_EVENT, 1: CTRL_BREAK_EVENT, 2: CTRL_CLOSE_EVENT
+                    # 5: CTRL_LOGOFF_EVENT, 6: CTRL_SHUTDOWN_EVENT
+                    if ctrl_type in (2, 5, 6):
+                        logger.info(f"Windows shutdown/logoff signal received (type={ctrl_type}). Finalizing session...")
+                        self.shutdown_cleanup()
+                        return True
+                    return False
+
+                self._win_handler_ref = HandlerRoutine(win_console_handler)
+                ctypes.windll.kernel32.SetConsoleCtrlHandler(self._win_handler_ref, True)
+                logger.info("Windows shutdown and logoff control handler registered.")
+            except Exception as e:
+                logger.warning(f"Could not register Win32 console handler: {e}")
+
+    def _signal_handler(self, sig_name: str):
+        logger.info(f"Process termination signal received: {sig_name}")
+        self.shutdown_cleanup()
+        sys.exit(0)
+
+    def shutdown_cleanup(self):
+        """Synchronously finalizes active work session on Supabase and releases resources upon PC shutdown."""
+        if self._has_shutdown:
+            return
+        self._has_shutdown = True
+
+        logger.info("Performing shutdown cleanup: closing active work session if present...")
+        self._running = False
+
+        if self.status in ("active", "paused") and self.current_session_id:
+            try:
+                elapsed = self.get_current_session_seconds()
+                logger.info(f"Closing active work session {self.current_session_id} on system shutdown (elapsed={elapsed}s)...")
+                self.client.end_work_session(
+                    self.current_session_id,
+                    elapsed,
+                    notes="Clôturée automatiquement à l'extinction du PC"
+                )
+                self.status = "completed"
+            except Exception as e:
+                logger.error(f"Error closing session on shutdown: {e}")
+
+        try:
+            self.systray.stop()
+        except Exception:
+            pass
+
+        if self.single_instance_lock:
+            try:
+                self.single_instance_lock.release()
+            except Exception:
+                pass
+
     def _execute_end_work_and_quit(self):
         """Finalizes session on Supabase and exits application."""
-        logger.info("Finalizing work session and terminating agent...")
-        total_sec = self.get_current_session_seconds()
-        if self.current_session_id:
-            self.client.end_work_session(self.current_session_id, total_sec)
-
-        self.status = "completed"
-        self._running = False
-        self.systray.stop()
-        if self.single_instance_lock:
-            self.single_instance_lock.release()
+        logger.info("User requested work termination. Finalizing session and exiting...")
+        self.shutdown_cleanup()
         try:
             self.root.destroy()
         except Exception:
             pass
         sys.exit(0)
+
+    def restart_app(self):
+        """Restarts the application executable or script cleanly."""
+        logger.info("Restarting application requested...")
+        import subprocess
+        from agent.config import get_executable_path
+
+        self.shutdown_cleanup()
+
+        try:
+            exe_path = get_executable_path()
+            if getattr(sys, "frozen", False):
+                subprocess.Popen([exe_path])
+            else:
+                subprocess.Popen([sys.executable] + sys.argv)
+        except Exception as e:
+            logger.error(f"Failed to spawn new process on restart: {e}")
+
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+        sys.exit(0)
+
+    def _show_connection_alert(self):
+        """Displays or focuses the connection lost alert modal."""
+        if not self._connection_alert_modal or not self._connection_alert_modal.top.winfo_exists():
+            self._connection_alert_modal = ConnectionAlertModal(
+                parent=self.root,
+                on_restart=self.restart_app,
+                on_dismiss=self._dismiss_connection_alert,
+            )
+        self._connection_alert_modal.show()
+
+    def _dismiss_connection_alert(self):
+        self._connection_alert_modal = None
 
     # ==================== BACKGROUND HEARTBEAT ====================
 
@@ -318,10 +434,15 @@ class KRTTrackerAgent:
                 self.is_connected = success
                 if success:
                     self.last_heartbeat_time = time.time()
+                    self._consecutive_heartbeat_failures = 0
                     if session_data:
                         self._sync_session_from_remote(session_data)
                 else:
-                    logger.warning("Heartbeat failed, will retry next cycle.")
+                    self._consecutive_heartbeat_failures += 1
+                    logger.warning(f"Heartbeat failed ({self._consecutive_heartbeat_failures} consecutive failure(s)).")
+                    if self._consecutive_heartbeat_failures == 2:
+                        self.root.after(0, self._show_connection_alert)
+
 
     # ==================== AUTO-UPDATE ====================
 
@@ -422,6 +543,8 @@ class KRTTrackerAgent:
             self.client.access_token = creds.get("access_token")
             self.client.refresh_token = creds.get("refresh_token")
             self.client.user_id = creds.get("user_id")
+            if creds.get("profile"):
+                self.client.user_profile = creds.get("profile")
             if self.client.verify_token():
                 authenticated = True
                 logger.info(f"Authenticated as {self.get_user_display_name()}")
