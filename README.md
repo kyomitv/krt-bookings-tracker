@@ -1,165 +1,185 @@
-# KRT Bookings Tracker - Agent RH & Suivi Temps Réel
+# ⏱️ KRT Bookings Tracker — Guide Utilisateur
 
-Agent logiciel léger, multiplateforme et autonome pour le suivi en temps réel du temps de travail des techniciens **KRT Bookings**.
-
----
-
-## 🌟 Fonctionnalités Principales
-
-1. **Premier Lancement & Appairage Sécurisé** :
-   - Fenêtre d'authentification moderne (Tkinter) connectée à **Supabase Auth**.
-   - Chiffrement symétrique local des identifiants et tokens (`Fernet` avec clé dérivée de l'empreinte machine).
-   - Inscription automatique dans le démarrage système au premier lancement.
-
-2. **Qualification Interactive au Démarrage** :
-   - Détection du démarrage du PC avec popup modale interactive :
-     - **💼 Travailler (Journée pro)** : Envoie le signal `START_WORK`, initialise la session en base de données et active le chronomètre.
-     - **☕ Mode Loisir / Perso** : Désactive le suivi RH pour préserver la vie privée et ne pas fausser les compteurs le week-end ou en dehors du travail.
-
-3. **Suivi en Arrière-plan & Systray (Barre des tâches)** :
-   - Icône discrète dans la zone de notification / barre des tâches (`pystray` + `Pillow`).
-   - Signal **Heartbeat** régulier (toutes les 60 secondes) envoyé à Supabase avec résilience réseau.
-   - Changement dynamique de couleur d'icône selon l'état (🟢 _En cours_, 🟡 _En pause_, ☕ _Perso_).
-
-4. **Dashboard Local « Suivi de la journée »** :
-   - Chronomètre digital en temps réel (HH:MM:SS).
-   - Badge d'état visuel et heure de début de session.
-   - Total d'heures cumulées dans la journée.
-   - Contrôles directs : _Mettre en pause_, _Reprendre_, _Changer de mode_.
-
-5. **Clôture de Session Sécurisée** :
-   - Confirmation pop-up avant fermeture : _"Voulez-vous enregistrer la fin de votre journée de travail ?"_.
-   - Envoi du signal `END_WORK` et enregistrement de la durée totale avant fermeture propre de l'agent.
-
-6. **Intégration Autostart Multiplateforme** :
-   - **Windows** : Registre `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`
-   - **Linux** : Fichier desktop `~/.config/autostart/com.krt.bookings.tracker.desktop`
-   - **macOS** : Fichier plist `~/Library/LaunchAgents/com.krt.bookings.tracker.plist`
+Bienvenue sur le guide d'utilisation de **KRT Bookings Tracker**, l'application de suivi de temps et de pointage automatique conçue pour les équipes de **KRT Studios**.
 
 ---
 
-## 🗄️ Schéma Base de Données (Supabase)
+## 🎯 À quoi sert cette application ?
 
-Les tables et politiques RLS suivantes ont été déployées sur le projet Supabase :
+**KRT Bookings Tracker** simplifie votre quotidien en comptabilisant précisément votre temps de travail sans paperasse ni saisie manuelle fastidieuse :
 
-- **`public.hr_work_sessions`** :
-  - `id` (UUID, Primary Key)
-  - `user_id` (UUID, référence `auth.users(id)`)
-  - `started_at` (Timestamptz)
-  - `ended_at` (Timestamptz, nullable)
-  - `last_heartbeat_at` (Timestamptz)
-  - `status` (`'active'`, `'paused'`, `'completed'`, `'cancelled'`)
-  - `session_type` (`'work'`, `'personal'`)
-  - `duration_seconds` (Integer)
-  - `device_info` (JSONB)
-  - `notes` (Text)
-
-- **`public.hr_activity_logs`** :
-  - `id` (UUID, Primary Key)
-  - `session_id` (UUID, référence `hr_work_sessions(id)`)
-  - `user_id` (UUID, référence `auth.users(id)`)
-  - `event_type` (`START_WORK`, `HEARTBEAT`, `PAUSE`, `RESUME`, `END_WORK`, `PERSONAL_MODE`)
-  - `logged_at` (Timestamptz)
-  - `metadata` (JSONB)
+- 🕒 **Comptage automatique** de vos heures travaillées dès l'allumage de votre ordinateur.
+- ☕ **Respect de votre vie privée** grâce à un mode personnel débrayable en 1 clic.
+- 📊 **Tableau de bord clair** affichant votre temps en direct, votre heure de début et votre fin de journée estimée.
+- 🔄 **Mises à jour transparentes** sans manipulation technique.
 
 ---
 
-## 🚀 Installation & Démarrage en Développement
+## 📥 Guide d'Installation (Téléchargement & Mise en route)
 
-### 1. Prérequis
+### Étape 1 : Télécharger l'application
+1. Rendez-vous sur la page officielle des versions : [👉 Télécharger la dernière version (GitHub Releases)](https://github.com/kyomitv/krt-bookings-tracker/releases/latest).
+2. Dans la section **Assets** en bas de la publication, cliquez sur **`KRT-Bookings-Tracker.exe`** pour télécharger le programme d'installation autonome.
 
-- Python 3.10+
-- Dépendances du projet :
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Lancer l'agent en direct
-
-```bash
-python main.py
-```
-
-### 3. Lancer les tests unitaires
-
-```bash
-python test_agent.py
-```
+> [!TIP]
+> **Emplacement conseillé :** Une fois le fichier téléchargé, placez-le dans un dossier permanent de votre choix (par exemple dans votre dossier `Documents\KRT Tracker` ou `Programmes`). Évitez de le laisser dans votre dossier temporaire *Téléchargements*.
 
 ---
 
-## 🔄 Versioning & Auto-Update GitHub Releases
+### Étape 2 : Premier lancement & Sécurité Windows
 
-L'agent intègre un système complet d'auto-mise à jour en tâche de fond relié directement à **GitHub Releases** :
-
-1. **Vérification automatique & manuelle** :
-   - Au démarrage (après 4 secondes) et périodiquement en tâche de fond (toutes les 4h).
-   - Manuellement via le menu Systray (_"🔄 Vérifier les mises à jour..."_) ou le Dashboard.
-2. **Détection SemVer** :
-   - Compare la version locale (`APP_VERSION` dans `agent/config.py`) avec le dernier tag publié sur GitHub (`v1.0.1`, etc.).
-3. **Téléchargement & Remplacement à chaud** :
-   - Téléchargement sécurisé du binaire `.exe` avec barre de progression interactive.
-   - Remplacement atomique de l'exécutable sous Windows et redémarrage automatique en toute transparence.
-4. **Publication Automatisée (GitHub Actions)** :
-   - Dès qu'un tag Git est poussé sur le dépôt (`git tag v1.0.1 && git push origin v1.0.1`), le workflow CI/CD `.github/workflows/release.yml` compile automatiquement l'exécutable et crée la Release GitHub avec l'artefact `KRT-Bookings-Tracker.exe`.
-
-### Configuration du Dépôt GitHub :
-
-Dans `agent/config.py` ou via variable d'environnement :
-
-```python
-GITHUB_REPO = "votre-compte-ou-org/votre-repo"
-```
+1. Double-cliquez sur **`KRT-Bookings-Tracker.exe`**.
+2. **Alerte Windows SmartScreen ?** *(Fréquent lors du premier téléchargement d'une application interne)* :
+   - Si une fenêtre bleue s'affiche disant *"Windows a protégé votre ordinateur"* :
+     1. Cliquez sur le lien texte **« Informations complémentaires »**.
+     2. Cliquez ensuite sur le bouton **« Exécuter quand même »**.
 
 ---
 
-## 📦 Compilation en Exécutable Standalone (.exe)
+### Étape 3 : Connexion à votre compte KRT
 
-Pour générer un binaire autonome `.exe` (ou binaire Linux/macOS) sans console et prêt à être déployé sur les postes des techniciens :
+Au premier lancement, la fenêtre de connexion sécurisée s'affiche :
 
-```bash
-python build.py
-```
-
-Le binaire compilé sera généré dans le dossier `dist/` :
-
-- `dist/KRT-Bookings-Tracker.exe` (Windows)
+1. Renseignez votre **adresse e-mail professionnelle** et votre **mot de passe** KRT.
+2. Cliquez sur **« Se connecter »**.
+3. Une fois connecté, vos identifiants sont sauvegardés de façon **chiffrée et sécurisée** sur votre ordinateur. Vous n'aurez plus besoin de les ressaisir !
 
 ---
 
-## 📁 Structure du Projet
+### Étape 4 : Lancement automatique configuré !
 
+🎉 **Félicitations, l'installation est terminée !**
+- L'application s'inscrit automatiquement dans le démarrage de votre ordinateur : vous n'avez pas besoin de créer de raccourci spécial.
+- L'application vient se placer discrètement dans la **zone de notification** (en bas à droite de votre écran, à côté de l'horloge Windows).
+
+---
+
+## ☀️ Votre Routine Quotidienne
+
+```mermaid
+flowchart LR
+    A[🌅 Allumage du PC] --> B{Choix au démarrage}
+    B -->|💼 Travailler| C[🟢 Session Active]
+    B -->|☕ Loisir / Perso| D[🔵 Mode Personnel]
+    C --> E[⏸️ Pause déjeuner / café]
+    E --> C
+    C --> F[⏹️ Fin de journée]
+    F --> G[💾 Clôture & Sauvegarde]
 ```
-krt-bookings-tracker/
-├── .github/
-│   └── workflows/
-│       └── release.yml        # CI/CD GitHub Actions pour compilation & publication automatique
-├── agent/
-│   ├── __init__.py
-│   ├── agent.py               # Orchestrateur principal & cycle de vie
-│   ├── autostart.py           # Gestionnaire autostart cross-platform
-│   ├── config.py              # Paramètres Supabase, GitHub Repo & chemins locaux
-│   ├── crypto_storage.py      # Stockage chiffré des tokens / session
-│   ├── logger.py              # Journalisation rotative locale
-│   ├── supabase_client.py     # Client API Supabase (Auth, Heartbeat, Sessions)
-│   ├── systray_manager.py     # Gestionnaire d'icône systray & menu contextuel
-│   ├── updater.py             # Gestionnaire de versioning & auto-update GitHub
-│   └── ui/
-│       ├── __init__.py
-│       ├── confirm_modal.py   # Pop-up de confirmation de fin de journée
-│       ├── dashboard_view.py  # Dashboard live "Suivi de la journée"
-│       ├── login_view.py      # Fenêtre de connexion & premier appairage
-│       ├── startup_modal.py   # Fenêtre de qualification de session au démarrage
-│       ├── theme.py           # Design System & palette moderne
-│       └── update_modal.py    # Modal de mise à jour & barre de téléchargement
-├── assets/
-│   ├── app_icon.ico           # Icône multi-résolution Windows
-│   └── app_icon.png           # Icône PNG haute résolution
-├── build.py                   # Script de compilation PyInstaller (--noconsole --onefile)
-├── generate_assets.py         # Générateur d'icônes
-├── main.py                    # Point d'entrée exécutable
-├── requirements.txt           # Dépendances Python
-├── test_agent.py              # Tests de validation (Auth, Crypto, Updater, SemVer)
-└── README.md                  # Documentation du projet
-```
+
+### 1. Le Matin : Allumage de l'ordinateur
+Dès l'ouverture de votre session Windows, une fenêtre interactive s'affiche :
+
+- **💼 Travailler (Journée pro)** : Démarre immédiatement votre journée de travail et enclenche le chronomètre.
+- **☕ Mode Loisir / Perso** : Si vous allumez votre ordinateur pour un usage personnel (week-end, soirée, congés). Aucun suivi n'est effectué et aucun temps de travail n'est décompté.
+
+---
+
+### 2. En cours de journée : La Barre des Tâches (Systray)
+L'icône KRT se loge discrètement en bas à droite de votre écran. Sa couleur vous indique votre statut en un coup d'œil :
+
+| Icône | Statut | Signification |
+| :--- | :--- | :--- |
+| 🟢 **Pastille Verte** | **En cours** | Session de travail active, vos heures sont comptabilisées. |
+| 🟡 **Pastille Jaune** | **En pause** | Pause temporaire (repas, pause café). Le chronomètre est suspendu. |
+| 🔵 **Pastille Bleue** | **Mode Perso** | Mode personnel / loisir. Aucun suivi RH. |
+
+> [!TIP]
+> **Icône masquée ?** Si vous ne voyez pas l'icône, cliquez sur la petite flèche **`^`** dans la barre des tâches de Windows pour faire apparaître les icônes cachées.
+
+---
+
+### 3. Le Clic Droit : Menu d'Actions Rapides
+Faites un **clic droit** sur l'icône KRT dans la barre des tâches pour :
+
+- ⏱️ **Suivi de la journée (Dashboard)** : Ouvrir le tableau de bord détaillé.
+- ⏸️ **Mettre en pause** / ▶️ **Reprendre le travail** : Gérer vos temps de pause en 1 seconde.
+- ☕ **Passer en mode loisir / perso** : Basculer temporairement hors du mode pro.
+- 🔄 **Vérifier les mises à jour...** : Vérifier si une nouvelle version est disponible.
+- ⏹️ **Terminer la journée & Quitter** : Clôturer et enregistrer votre journée.
+
+---
+
+### 4. Le Tableau de Bord « Suivi de la journée »
+
+Double-cliquez sur l'icône ou sélectionnez **Suivi de la journée** pour ouvrir le dashboard :
+
+![Dashboard Overview](assets/app_icon.png)
+
+Dans cette fenêtre, vous retrouvez :
+1. **Votre Profil** : Nom, prénom et rôle.
+2. **Le Chronomètre en direct** : Durée de votre session actuelle.
+3. **Les Repères Horaires** :
+   - Heure de début de la session.
+   - **Fin de journée estimée** (calculée automatiquement sur une base de 7h de travail + 1h30 de pause repas).
+4. **Le Total de la Journée** : Cumul de toutes vos sessions travaillées aujourd'hui.
+5. **Indicateur de Synchronisation** : Confirme que vos données sont bien transmises en temps réel.
+6. **Boutons d'action directs** : Pour mettre en pause ou terminer votre journée sans passer par le menu.
+
+> [!NOTE]
+> Vous pouvez fermer la fenêtre du tableau de bord (croix en haut à droite) à tout moment : l'application continuera de fonctionner en arrière-plan sans interrompre votre session.
+
+---
+
+### 5. Le Soir : Fin de Journée
+Lorsque votre journée est terminée :
+1. Cliquez sur **⏹️ Terminer la journée de travail** (depuis le tableau de bord ou par clic droit sur l'icône).
+2. Une boîte de dialogue de confirmation vous résume la durée totale effectuée.
+3. Cliquez sur **Confirmer et Quitter** : votre journée est définitivement enregistrée sur les serveurs KRT et l'application se ferme proprement.
+
+---
+
+## 🔄 Mises à Jour Automatiques
+
+Vous n'avez rien à réinstaller manuellement :
+- L'application recherche automatiquement les mises à jour au démarrage et en arrière-plan.
+- Lorsqu'une nouvelle version est disponible, une notification vous propose de l'installer.
+- Cliquez simplement sur **Mettre à jour** : la nouvelle version est téléchargée, installée et redémarrée automatiquement en quelques secondes.
+
+---
+
+## 🔒 Vie Privée & Sécurité
+
+La confiance et le respect de la vie privée sont au cœur de l'application :
+
+- ❌ **Aucune capture d'écran** ni enregistrement de frappes (keylogger).
+- ❌ **Aucune surveillance** des sites web consultés, des applications ouvertes ou des fichiers.
+- ❌ **Aucune géolocalisation**.
+- ✅ **Uniquement la mesure du temps de travail effectif** et l'indication de présence pour l'organisation de l'équipe.
+- 🔐 **Sécurité renforcée** : Vos accès sont chiffrés localement sur votre poste avec les standards de sécurité les plus stricts.
+
+---
+
+## ❓ Foire Aux Questions (FAQ)
+
+<details>
+<summary><b>J'ai oublié de mettre en pause pendant ma pause déjeuner, que faire ?</b></summary>
+<br>
+Mettez en pause dès que vous vous en rendez compte, ou signalez-le simplement à votre responsable d'équipe / RH afin qu'un ajustement soit effectué sur votre fiche de présence.
+</details>
+
+<details>
+<summary><b>Que se passe-t-il si je perds ma connexion Internet ?</b></summary>
+<br>
+Aucune inquiétude : l'application continue de comptabiliser votre temps localement. Dès que votre connexion Internet est rétablie, toutes les données sont automatiquement synchronisées sans perte.
+</details>
+
+<details>
+<summary><b>L'application ne s'ouvre plus ou j'ai un message d'erreur de connexion ?</b></summary>
+<br>
+Vérifiez que votre connexion Internet fonctionne bien. Si le problème persiste, vérifiez que votre mot de passe n'a pas été modifié ou contactez le support technique interne.
+</details>
+
+<details>
+<summary><b>Comment utiliser mon PC le week-end sans que mon temps soit compté ?</b></summary>
+<br>
+Au démarrage du PC, cliquez simplement sur <b>☕ Mode Loisir / Perso</b> sur la fenêtre d'accueil. L'application reste inactive et aucune heure de travail n'est enregistrée.
+</details>
+
+---
+
+## 📞 Support & Assistance
+
+En cas de question ou de besoin d'assistance technique, contactez l'équipe support KRT :
+- 🌐 **Site web** : [krtstudios.tv](https://krtstudios.tv)
+- 🏢 **KRT Studios** — Orsay, Paris
