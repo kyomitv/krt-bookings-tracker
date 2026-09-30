@@ -1,44 +1,168 @@
 """
 Theme and UI constants for KRT Bookings Tracker Tkinter Interface.
+Inspired by the modern, premium aesthetic of krtstudios.tv.
 """
+import sys
+import tkinter as tk
+from pathlib import Path
+from typing import Optional, Tuple
+from PIL import Image, ImageTk
 
-# Color Palette
-BG_MAIN = "#0F172A"       # Deep Slate 900
-BG_CARD = "#1E293B"       # Slate 800
-BG_CARD_HOVER = "#273549" # Slate 750
-BG_INPUT = "#0F172A"      # Slate 900
-BORDER_COLOR = "#334155"  # Slate 700
-BORDER_FOCUS = "#3B82F6"  # Blue 500
+# ==================== ART DIRECTION / PALETTE (krtstudios.tv) ====================
+# Deep obsidian background and graphite surfaces
+BG_MAIN = "#08070A"         # Ultra-deep obsidian matte black
+BG_CARD = "#121115"         # Surface graphite card
+BG_CARD_HOVER = "#1A1920"   # Card hover highlight
+BG_CARD_ACTIVE = "#22202A"  # Card active/pressed
+BG_INPUT = "#16151B"        # Sleek dark form input background
 
-TEXT_PRIMARY = "#F8FAFC"   # Slate 50
-TEXT_SECONDARY = "#94A3B8" # Slate 400
-TEXT_MUTED = "#64748B"     # Slate 500
+# Subtle borders and dividers
+BORDER_COLOR = "#26242C"    # Crisp subtle card & divider border
+BORDER_SUBTLE = "#1C1A22"   # Fainter separator
+BORDER_HOVER = "#3D3A46"    # Border hover
+BORDER_FOCUS = "#345CFF"    # Focus electric blue ring
 
-ACCENT_BLUE = "#3B82F6"
-ACCENT_BLUE_HOVER = "#2563EB"
-ACCENT_GREEN = "#10B981"
+# Refined typography colors
+TEXT_PRIMARY = "#F4F2ED"     # Warm chalk / paper white
+TEXT_SECONDARY = "#B1AFB5"   # Muted silver gray
+TEXT_MUTED = "#706E76"       # Dark muted gray for metadata / hints
+TEXT_INVERTED = "#08070A"    # High contrast text on white/light elements
+PAPER = "#F1F0E9"            # High-contrast light paper badge
+
+# Accent colors
+ACCENT_BLUE = "#345CFF"        # Signature KRT Electric Cobalt Blue
+ACCENT_BLUE_HOVER = "#2347DF"  # Cobalt hover
+ACCENT_BLUE_LIGHT = "#9BADFF"  # Soft blue focus accent
+ACCENT_GREEN = "#10B981"       # Vibrant Emerald for Active session
 ACCENT_GREEN_HOVER = "#059669"
-ACCENT_AMBER = "#F59E0B"
+ACCENT_AMBER = "#F59E0B"       # Warm Amber for Paused state
 ACCENT_AMBER_HOVER = "#D97706"
-ACCENT_RED = "#EF4444"
-ACCENT_RED_HOVER = "#DC2626"
+ACCENT_RED = "#E11D48"         # Crimson / Rose Red for Stop & Quit
+ACCENT_RED_HOVER = "#BE123C"
 ACCENT_PURPLE = "#8B5CF6"
 
 # Fonts
-FONT_FAMILY = "Segoe UI" if "Segoe UI" else "Helvetica"
-FONT_TITLE = (FONT_FAMILY, 18, "bold")
+FONT_FAMILY = "Figtree" if "Figtree" in ("Figtree",) else ("Segoe UI" if sys.platform == "win32" else "Helvetica")
+FONT_TITLE = (FONT_FAMILY, 16, "bold")
 FONT_SUBTITLE = (FONT_FAMILY, 12, "bold")
 FONT_BODY = (FONT_FAMILY, 10)
 FONT_BODY_BOLD = (FONT_FAMILY, 10, "bold")
 FONT_SMALL = (FONT_FAMILY, 9)
+FONT_EYEBROW = (FONT_FAMILY, 8, "bold")
 FONT_TIMER = (FONT_FAMILY, 32, "bold")
 FONT_BADGE = (FONT_FAMILY, 9, "bold")
 
-def center_window(window, width: int, height: int):
+# Global icon cache to prevent garbage collection in Tkinter
+_ICON_PHOTO_CACHE = {}
+_LOGO_PHOTO_CACHE = {}
+
+
+def get_asset_path(filename: str) -> Path:
+    """Returns absolute path to an asset, handling both dev and PyInstaller frozen runtime."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        base_dir = Path(sys._MEIPASS) / "assets"
+    else:
+        base_dir = Path(__file__).resolve().parent.parent.parent / "assets"
+    return base_dir / filename
+
+
+def apply_windows_app_id():
+    """Sets explicit AppUserModelID on Windows to ensure correct taskbar grouping & icon."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("krt.studios.bookings.tracker")
+        except Exception:
+            pass
+
+
+def get_app_icon_photo() -> Optional[ImageTk.PhotoImage]:
+    """Returns the Tkinter-compatible PhotoImage of the application icon."""
+    global _ICON_PHOTO_CACHE
+    if "app_icon" in _ICON_PHOTO_CACHE:
+        return _ICON_PHOTO_CACHE["app_icon"]
+
+    icon_png = get_asset_path("app_icon.png")
+    if icon_png.exists():
+        try:
+            pil_img = Image.open(icon_png).convert("RGBA")
+            tk_img = ImageTk.PhotoImage(pil_img)
+            _ICON_PHOTO_CACHE["app_icon"] = tk_img
+            return tk_img
+        except Exception:
+            pass
+    return None
+
+
+def get_krt_logo_tk(target_height: int = 24) -> Optional[ImageTk.PhotoImage]:
+    """Returns the authentic KRT Studios logo resized to given height with preserved aspect ratio."""
+    global _LOGO_PHOTO_CACHE
+    key = f"logo_{target_height}"
+    if key in _LOGO_PHOTO_CACHE:
+        return _LOGO_PHOTO_CACHE[key]
+
+    # Try official logo site asset first, then app icon
+    logo_path = get_asset_path("krt_logo_site.png")
+    if not logo_path.exists():
+        logo_path = get_asset_path("app_icon.png")
+
+    if logo_path.exists():
+        try:
+            pil_img = Image.open(logo_path).convert("RGBA")
+            orig_w, orig_h = pil_img.size
+            ratio = target_height / orig_h
+            target_width = max(1, int(orig_w * ratio))
+            resized = pil_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+            tk_img = ImageTk.PhotoImage(resized)
+            _LOGO_PHOTO_CACHE[key] = tk_img
+            return tk_img
+        except Exception:
+            pass
+    return None
+
+
+def center_window(window: tk.Toplevel | tk.Tk, width: int, height: int):
     """Centers a tkinter window on screen."""
     window.update_idletasks()
     screen_width = window.winfo_screenwidth()
     screen_height = window.winfo_screenheight()
-    x = (screen_width // 2) - (width // 2)
-    y = (screen_height // 2) - (height // 2)
+    x = max(0, (screen_width // 2) - (width // 2))
+    y = max(0, (screen_height // 2) - (height // 2))
     window.geometry(f"{width}x{height}+{x}+{y}")
+
+
+def apply_window_theme(
+    window: tk.Toplevel | tk.Tk,
+    title: str = "KRT Bookings Tracker",
+    width: Optional[int] = None,
+    height: Optional[int] = None,
+    resizable: bool = False,
+):
+    """
+    Applies consistent KRT Studios theme, custom app icon, background color,
+    and centered geometry to any Tk or Toplevel window.
+    """
+    apply_windows_app_id()
+
+    window.title(title)
+    window.configure(bg=BG_MAIN)
+    window.resizable(resizable, resizable)
+
+    # Apply application icon (both iconphoto and iconbitmap for maximum Windows/Tkinter compatibility)
+    try:
+        ico_path = get_asset_path("app_icon.ico")
+        if ico_path.exists() and sys.platform == "win32":
+            window.iconbitmap(str(ico_path))
+    except Exception:
+        pass
+
+    try:
+        photo = get_app_icon_photo()
+        if photo:
+            window.iconphoto(True, photo)
+    except Exception:
+        pass
+
+    if width and height:
+        center_window(window, width, height)
+

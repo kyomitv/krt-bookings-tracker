@@ -18,37 +18,70 @@ class SystrayManager:
         self._is_running = False
 
     def _create_icon_image(self, color_hex: str = "#10B981") -> Image.Image:
-        """Generates a dynamic high-res rounded icon image with state indicator."""
+        """Generates a dynamic high-res rounded icon image with KRT branding and state indicator."""
         width = 64
         height = 64
         image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
 
-        # Background rounded box (Dark Slate #0F172A)
+        # Background rounded box (Dark Obsidian #08070A)
         draw.rounded_rectangle(
-            [(4, 4), (60, 60)],
+            [(2, 2), (width - 3, height - 3)],
             radius=14,
-            fill="#0F172A",
-            outline="#334155",
+            fill="#08070A",
+            outline="#26242C",
             width=2,
         )
 
-        # Status colored circle in center
-        draw.ellipse([(16, 16), (48, 48)], fill=color_hex)
-        # Center inner dot
-        draw.ellipse([(26, 26), (38, 38)], fill="#FFFFFF")
+        # Load KRT logo if available
+        from agent.ui.theme import get_asset_path
+        logo_path = get_asset_path("krt_logo_site.png")
+        if not logo_path.exists():
+            logo_path = get_asset_path("app_icon.png")
+
+        if logo_path.exists():
+            try:
+                logo_img = Image.open(logo_path).convert("RGBA")
+                target_w = 42
+                target_h = 42
+                orig_w, orig_h = logo_img.size
+                ratio = min(target_w / orig_w, target_h / orig_h)
+                new_w = max(1, int(orig_w * ratio))
+                new_h = max(1, int(orig_h * ratio))
+                resized = logo_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                pos_x = (width - new_w) // 2
+                pos_y = (height - new_h) // 2 - 2
+                image.paste(resized, (pos_x, pos_y), resized)
+            except Exception:
+                pass
+        else:
+            # Fallback text
+            draw.text((width // 2, height // 2 - 2), "KRT", fill="#F4F2ED", anchor="mm")
+
+        # Status badge indicator (bottom right circle with dark outline)
+        dot_r = 8
+        dot_cx = width - 12
+        dot_cy = height - 12
+        draw.ellipse(
+            [(dot_cx - dot_r - 2, dot_cy - dot_r - 2), (dot_cx + dot_r + 2, dot_cy + dot_r + 2)],
+            fill="#08070A"
+        )
+        draw.ellipse(
+            [(dot_cx - dot_r, dot_cy - dot_r), (dot_cx + dot_r, dot_cy + dot_r)],
+            fill=color_hex
+        )
 
         return image
 
     def _get_status_color(self) -> str:
         status = getattr(self.agent, "status", "idle")
         if status == "active":
-            return "#10B981" # Green
+            return "#10B981"  # Emerald Green
         elif status == "paused":
-            return "#F59E0B" # Amber
+            return "#F59E0B"  # Amber
         elif status == "personal":
-            return "#3B82F6" # Blue
-        return "#64748B"     # Muted / Gray
+            return "#345CFF"  # Cobalt Blue
+        return "#706E76"      # Muted Gray
 
     def update_icon(self):
         """Refreshes the tray icon appearance based on current agent state."""

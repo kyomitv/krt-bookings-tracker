@@ -278,6 +278,9 @@
   ('agent',
    'E:\\SIMON\\dev\\krt-bookings-tracker\\agent\\__init__.py',
    'PYMODULE'),
+  ('agent._build_config',
+   'E:\\SIMON\\dev\\krt-bookings-tracker\\agent\\_build_config.py',
+   'PYMODULE'),
   ('agent.agent',
    'E:\\SIMON\\dev\\krt-bookings-tracker\\agent\\agent.py',
    'PYMODULE'),
@@ -316,6 +319,12 @@
    'PYMODULE'),
   ('agent.ui.theme',
    'E:\\SIMON\\dev\\krt-bookings-tracker\\agent\\ui\\theme.py',
+   'PYMODULE'),
+  ('agent.ui.update_modal',
+   'E:\\SIMON\\dev\\krt-bookings-tracker\\agent\\ui\\update_modal.py',
+   'PYMODULE'),
+  ('agent.updater',
+   'E:\\SIMON\\dev\\krt-bookings-tracker\\agent\\updater.py',
    'PYMODULE'),
   ('argparse',
    'C:\\Program '
@@ -1925,6 +1934,10 @@
   ('tkinter.constants',
    'C:\\Program '
    'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\\Lib\\tkinter\\constants.py',
+   'PYMODULE'),
+  ('tkinter.ttk',
+   'C:\\Program '
+   'Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_3.11.2544.0_x64__qbz5n2kfra8p0\\Lib\\tkinter\\ttk.py',
    'PYMODULE'),
   ('token',
    'C:\\Program '

@@ -42,12 +42,12 @@ except ImportError:
 # Application metadata
 APP_NAME = "KRT Bookings Tracker"
 APP_ID = "fr.krt.bookings.tracker"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 # GitHub Repository for Releases & Auto-Update
 GITHUB_REPO = os.environ.get(
     "GITHUB_REPO",
-    _BAKED_CONFIG.get("GITHUB_REPO", "krt-bookings/krt-bookings-tracker")
+    _BAKED_CONFIG.get("GITHUB_REPO", "kyomitv/krt-bookings-tracker")
 )
 UPDATE_CHECK_ON_STARTUP = True
 UPDATE_CHECK_INTERVAL_SECONDS = 14400 # 4 hours

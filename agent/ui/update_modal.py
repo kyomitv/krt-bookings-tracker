@@ -1,6 +1,7 @@
 """
 Modern Tkinter Update Modal for KRT Bookings Tracker.
 Presents available GitHub Releases, changelog, live download progress, and auto-restart trigger.
+Aesthetic inspired by krtstudios.tv.
 """
 import sys
 import threading
@@ -15,7 +16,8 @@ from agent.ui.theme import (
     TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, ACCENT_BLUE,
     ACCENT_BLUE_HOVER, ACCENT_GREEN, ACCENT_GREEN_HOVER,
     ACCENT_RED, FONT_TITLE, FONT_SUBTITLE, FONT_BODY,
-    FONT_BODY_BOLD, FONT_SMALL, FONT_BADGE, center_window
+    FONT_BODY_BOLD, FONT_SMALL, FONT_EYEBROW, FONT_BADGE,
+    apply_window_theme, get_krt_logo_tk
 )
 from agent.logger import logger
 
@@ -31,11 +33,8 @@ class UpdateModal:
         self.is_downloading = False
 
         self.top = tk.Toplevel(self.parent)
-        self.top.title(f"Mise à jour disponible - {self.release_info.tag_name}")
-        self.top.configure(bg=BG_MAIN)
-        self.top.resizable(False, False)
+        apply_window_theme(self.top, title=f"Mise à jour disponible — {self.release_info.tag_name}", width=520, height=500)
         self.top.attributes("-topmost", True)
-        center_window(self.top, 500, 480)
 
         # Modal grab
         self.top.transient(self.parent)

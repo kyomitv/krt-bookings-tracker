@@ -22,6 +22,7 @@ from agent.ui.startup_modal import StartupModal
 from agent.ui.dashboard_view import DashboardWindow
 from agent.ui.confirm_modal import ConfirmEndWorkModal
 from agent.ui.update_modal import UpdateModal
+from agent.ui.theme import apply_window_theme
 from agent.logger import logger
 
 class KRTTrackerAgent:
@@ -53,6 +54,7 @@ class KRTTrackerAgent:
 
         # Tkinter Root
         self.root = tk.Tk()
+        apply_window_theme(self.root, title=APP_NAME)
         self.root.withdraw() # Main root is hidden, child dialogs/dashboard are Toplevels
 
     def _keepalive(self):

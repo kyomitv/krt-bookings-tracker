@@ -1,12 +1,14 @@
 """
 Confirmation modal before ending work day and quitting agent.
+Aesthetic inspired by krtstudios.tv.
 """
 import tkinter as tk
 from typing import Optional, Callable
 from agent.ui.theme import (
     BG_MAIN, BG_CARD, BG_CARD_HOVER, BORDER_COLOR, TEXT_PRIMARY,
-    TEXT_SECONDARY, ACCENT_RED, ACCENT_RED_HOVER, FONT_TITLE,
-    FONT_SUBTITLE, FONT_BODY, FONT_BODY_BOLD, FONT_SMALL, center_window
+    TEXT_SECONDARY, TEXT_MUTED, ACCENT_RED, ACCENT_RED_HOVER, ACCENT_BLUE,
+    FONT_TITLE, FONT_SUBTITLE, FONT_BODY, FONT_BODY_BOLD, FONT_SMALL,
+    FONT_EYEBROW, apply_window_theme, get_krt_logo_tk
 )
 from agent.logger import logger
 
@@ -23,17 +25,39 @@ class ConfirmEndWorkModal:
         self.confirmed = False
 
         self.top = tk.Toplevel(self.parent)
-        self.top.title("Fin de journée - KRT Tracker")
-        self.top.configure(bg=BG_MAIN)
-        self.top.resizable(False, False)
+        apply_window_theme(self.top, title="Fin de journée — KRT Tracker", width=450, height=330)
         self.top.protocol("WM_DELETE_WINDOW", self._cancel)
-        center_window(self.top, 440, 320)
 
         self._build_ui()
 
     def _build_ui(self):
-        container = tk.Frame(self.top, bg=BG_MAIN, padx=24, pady=24)
+        container = tk.Frame(self.top, bg=BG_MAIN, padx=26, pady=24)
         container.pack(fill=tk.BOTH, expand=True)
+
+        # Header Eyebrow
+        top_bar = tk.Frame(container, bg=BG_MAIN)
+        top_bar.pack(fill=tk.X, pady=(0, 10))
+
+        self.logo_img = get_krt_logo_tk(target_height=18)
+        if self.logo_img:
+            logo_label = tk.Label(top_bar, image=self.logo_img, bg=BG_MAIN)
+            logo_label.pack(side=tk.LEFT)
+        else:
+            tk.Label(
+                top_bar,
+                text="KRT STUDIOS",
+                font=FONT_EYEBROW,
+                fg=ACCENT_BLUE,
+                bg=BG_MAIN,
+            ).pack(side=tk.LEFT)
+
+        tk.Label(
+            top_bar,
+            text="CLÔTURE DE JOURNÉE",
+            font=FONT_EYEBROW,
+            fg=TEXT_MUTED,
+            bg=BG_MAIN,
+        ).pack(side=tk.RIGHT)
 
         # Title
         tk.Label(
@@ -42,27 +66,27 @@ class ConfirmEndWorkModal:
             font=FONT_TITLE,
             fg=TEXT_PRIMARY,
             bg=BG_MAIN,
-        ).pack(anchor="w")
+        ).pack(anchor="w", pady=(4, 0))
 
         tk.Label(
             container,
-            text="Voulez-vous enregistrer la fin de votre journée de travail ?",
+            text="Voulez-vous enregistrer la fin de votre session et fermer l'agent ?",
             font=FONT_BODY,
             fg=TEXT_SECONDARY,
             bg=BG_MAIN,
-            wraplength=380,
+            wraplength=390,
             justify=tk.LEFT,
-        ).pack(anchor="w", pady=(6, 16))
+        ).pack(anchor="w", pady=(4, 14))
 
         # Summary Card
         card = tk.Frame(container, bg=BG_CARD, padx=16, pady=12, highlightbackground=BORDER_COLOR, highlightthickness=1)
-        card.pack(fill=tk.X, pady=(0, 20))
+        card.pack(fill=tk.X, pady=(0, 18))
 
         tk.Label(
             card,
-            text="Temps de travail enregistré aujourd'hui :",
-            font=FONT_SMALL,
-            fg=TEXT_SECONDARY,
+            text="TEMPS CUMULÉ AUJOURD'HUI",
+            font=FONT_EYEBROW,
+            fg=TEXT_MUTED,
             bg=BG_CARD,
         ).pack(anchor="w")
 
@@ -72,7 +96,7 @@ class ConfirmEndWorkModal:
             font=FONT_SUBTITLE,
             fg=TEXT_PRIMARY,
             bg=BG_CARD,
-        ).pack(anchor="w", pady=(2, 0))
+        ).pack(anchor="w", pady=(3, 0))
 
         # Buttons frame
         btn_frame = tk.Frame(container, bg=BG_MAIN)
@@ -106,7 +130,7 @@ class ConfirmEndWorkModal:
             activeforeground="#FFFFFF",
             relief=tk.FLAT,
             cursor="hand2",
-            padx=14,
+            padx=16,
             pady=8,
             command=self._confirm,
         )
@@ -129,3 +153,4 @@ class ConfirmEndWorkModal:
         self.top.focus_force()
         self.parent.wait_window(self.top)
         return self.confirmed
+

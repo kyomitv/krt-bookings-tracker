@@ -1,14 +1,15 @@
 """
 Login View for KRT Bookings Tracker.
 Modal for first launch authentication and pairing.
+Aesthetic inspired by krtstudios.tv.
 """
 import tkinter as tk
 from typing import Callable, Optional, Dict, Any
 from agent.ui.theme import (
-    BG_MAIN, BG_CARD, BG_INPUT, BORDER_COLOR, TEXT_PRIMARY,
+    BG_MAIN, BG_CARD, BG_INPUT, BORDER_COLOR, BORDER_FOCUS, TEXT_PRIMARY,
     TEXT_SECONDARY, TEXT_MUTED, ACCENT_BLUE, ACCENT_BLUE_HOVER,
     ACCENT_RED, FONT_TITLE, FONT_SUBTITLE, FONT_BODY, FONT_BODY_BOLD,
-    FONT_SMALL, center_window
+    FONT_SMALL, FONT_EYEBROW, apply_window_theme, get_krt_logo_tk
 )
 from agent.autostart import AutostartManager
 from agent.logger import logger
@@ -23,11 +24,8 @@ class LoginWindow:
         self.auth_data: Optional[Dict[str, Any]] = None
 
         self.top = tk.Toplevel(self.parent)
-        self.top.title("Connexion - KRT Bookings Tracker")
-        self.top.configure(bg=BG_MAIN)
-        self.top.resizable(False, False)
+        apply_window_theme(self.top, title="Connexion — KRT Bookings Tracker", width=460, height=540)
         self.top.protocol("WM_DELETE_WINDOW", self._on_close)
-        center_window(self.top, 440, 520)
 
         self._build_ui()
 
@@ -35,19 +33,24 @@ class LoginWindow:
         self.client = client
 
     def _build_ui(self):
-        container = tk.Frame(self.top, bg=BG_MAIN, padx=30, pady=30)
+        container = tk.Frame(self.top, bg=BG_MAIN, padx=32, pady=28)
         container.pack(fill=tk.BOTH, expand=True)
 
-        # Header Badge
-        badge_frame = tk.Frame(container, bg=BG_CARD, padx=12, pady=4)
-        badge_frame.pack(anchor="center", pady=(0, 10))
-        tk.Label(
-            badge_frame,
-            text="KRT BOOKINGS",
-            font=FONT_SMALL,
-            fg=ACCENT_BLUE,
-            bg=BG_CARD,
-        ).pack()
+        # Header Logo / Eyebrow
+        self.logo_img = get_krt_logo_tk(target_height=26)
+        if self.logo_img:
+            logo_label = tk.Label(container, image=self.logo_img, bg=BG_MAIN)
+            logo_label.pack(anchor="center", pady=(0, 6))
+        else:
+            badge_frame = tk.Frame(container, bg=BG_CARD, padx=12, pady=4, highlightbackground=BORDER_COLOR, highlightthickness=1)
+            badge_frame.pack(anchor="center", pady=(0, 8))
+            tk.Label(
+                badge_frame,
+                text="KRT STUDIOS",
+                font=FONT_EYEBROW,
+                fg=ACCENT_BLUE,
+                bg=BG_CARD,
+            ).pack()
 
         # Title
         tk.Label(
@@ -56,7 +59,7 @@ class LoginWindow:
             font=FONT_TITLE,
             fg=TEXT_PRIMARY,
             bg=BG_MAIN,
-        ).pack(anchor="center")
+        ).pack(anchor="center", pady=(4, 0))
 
         tk.Label(
             container,
@@ -64,10 +67,10 @@ class LoginWindow:
             font=FONT_SMALL,
             fg=TEXT_SECONDARY,
             bg=BG_MAIN,
-        ).pack(anchor="center", pady=(4, 20))
+        ).pack(anchor="center", pady=(4, 18))
 
         # Form Card
-        card = tk.Frame(container, bg=BG_CARD, padx=20, pady=20, highlightbackground=BORDER_COLOR, highlightthickness=1)
+        card = tk.Frame(container, bg=BG_CARD, padx=22, pady=20, highlightbackground=BORDER_COLOR, highlightthickness=1)
         card.pack(fill=tk.BOTH, expand=True)
 
         # Email Field
@@ -80,6 +83,7 @@ class LoginWindow:
             insertbackground=TEXT_PRIMARY,
             relief=tk.FLAT,
             highlightbackground=BORDER_COLOR,
+            highlightcolor=BORDER_FOCUS,
             highlightthickness=1,
         )
         self.email_entry.pack(fill=tk.X, pady=(6, 14), ipady=6)
@@ -96,6 +100,7 @@ class LoginWindow:
             show="•",
             relief=tk.FLAT,
             highlightbackground=BORDER_COLOR,
+            highlightcolor=BORDER_FOCUS,
             highlightthickness=1,
         )
         self.password_entry.pack(fill=tk.X, pady=(6, 14), ipady=6)
@@ -118,7 +123,7 @@ class LoginWindow:
 
         # Error Label
         self.error_label = tk.Label(card, text="", font=FONT_SMALL, fg=ACCENT_RED, bg=BG_CARD, wraplength=340)
-        self.error_label.pack(fill=tk.X, pady=(0, 8))
+        self.error_label.pack(fill=tk.X, pady=(0, 6))
 
         # Submit Button
         self.submit_btn = tk.Button(
@@ -180,3 +185,4 @@ class LoginWindow:
         self.top.focus_force()
         self.parent.wait_window(self.top)
         return self.auth_data
+

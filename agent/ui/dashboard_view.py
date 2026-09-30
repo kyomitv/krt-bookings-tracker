@@ -1,15 +1,17 @@
 """
 Live Tracking Dashboard Window for KRT Bookings Tracker.
 Displays real-time work session timer, status badge, heartbeats, and control actions.
+Aesthetic inspired by krtstudios.tv.
 """
 import tkinter as tk
 from typing import Optional
 from agent.ui.theme import (
-    BG_MAIN, BG_CARD, BG_CARD_HOVER, BORDER_COLOR, TEXT_PRIMARY,
-    TEXT_SECONDARY, TEXT_MUTED, ACCENT_BLUE, ACCENT_GREEN,
-    ACCENT_GREEN_HOVER, ACCENT_AMBER, ACCENT_AMBER_HOVER, ACCENT_RED,
-    ACCENT_RED_HOVER, FONT_SUBTITLE, FONT_BODY, FONT_BODY_BOLD,
-    FONT_SMALL, FONT_TIMER, FONT_BADGE, center_window
+    BG_MAIN, BG_CARD, BG_CARD_HOVER, BG_INPUT, BORDER_COLOR, BORDER_FOCUS,
+    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, ACCENT_BLUE, ACCENT_BLUE_HOVER,
+    ACCENT_GREEN, ACCENT_GREEN_HOVER, ACCENT_AMBER, ACCENT_AMBER_HOVER,
+    ACCENT_RED, ACCENT_RED_HOVER, FONT_TITLE, FONT_SUBTITLE, FONT_BODY,
+    FONT_BODY_BOLD, FONT_SMALL, FONT_EYEBROW, FONT_TIMER, FONT_BADGE,
+    apply_window_theme, get_krt_logo_tk
 )
 from agent.logger import logger
 
@@ -21,10 +23,7 @@ class DashboardWindow:
         self.parent = parent
 
         self.top = tk.Toplevel(self.parent)
-        self.top.title("Suivi de la journée - KRT Bookings Tracker")
-        self.top.configure(bg=BG_MAIN)
-        self.top.resizable(False, False)
-        center_window(self.top, 480, 560)
+        apply_window_theme(self.top, title="KRT Tracker — Suivi de la journée", width=490, height=600)
 
         # Handle close button: minimize to systray
         self.top.protocol("WM_DELETE_WINDOW", self.hide)
@@ -34,32 +33,68 @@ class DashboardWindow:
         self._update_loop()
 
     def _build_ui(self):
-        self.container = tk.Frame(self.top, bg=BG_MAIN, padx=24, pady=24)
+        self.container = tk.Frame(self.top, bg=BG_MAIN, padx=26, pady=24)
         self.container.pack(fill=tk.BOTH, expand=True)
 
-        # --- Top Header (User info) ---
+        # --- Top Brand Bar ---
+        top_bar = tk.Frame(self.container, bg=BG_MAIN)
+        top_bar.pack(fill=tk.X, pady=(0, 16))
+
+        # Brand logo or typography
+        self.logo_img = get_krt_logo_tk(target_height=22)
+        if self.logo_img:
+            logo_label = tk.Label(top_bar, image=self.logo_img, bg=BG_MAIN)
+            logo_label.pack(side=tk.LEFT)
+        else:
+            tk.Label(
+                top_bar,
+                text="KRT STUDIOS",
+                font=FONT_EYEBROW,
+                fg=TEXT_PRIMARY,
+                bg=BG_MAIN,
+            ).pack(side=tk.LEFT)
+
+        location_badge = tk.Label(
+            top_bar,
+            text="ORSAY PARIS • TRACKER AGENT",
+            font=FONT_EYEBROW,
+            fg=TEXT_MUTED,
+            bg=BG_MAIN,
+        )
+        location_badge.pack(side=tk.RIGHT)
+
+        # --- User Profile Card ---
         user_profile = self.agent.get_profile_info()
         full_name = f"{user_profile.get('first_name', '')} {user_profile.get('last_name', '')}".strip() or user_profile.get("email", "Technicien")
         role = user_profile.get("role", "Technicien").capitalize()
 
-        header_frame = tk.Frame(self.container, bg=BG_MAIN)
+        header_frame = tk.Frame(self.container, bg=BG_CARD, padx=14, pady=12, highlightbackground=BORDER_COLOR, highlightthickness=1)
         header_frame.pack(fill=tk.X, pady=(0, 16))
 
         # Avatar initial circle
         initials = (full_name[0] if full_name else "T").upper()
-        avatar_frame = tk.Frame(header_frame, bg=ACCENT_BLUE, width=42, height=42)
+        avatar_frame = tk.Frame(header_frame, bg=ACCENT_BLUE, width=38, height=38)
         avatar_frame.pack(side=tk.LEFT, padx=(0, 12))
         avatar_frame.pack_propagate(False)
         tk.Label(avatar_frame, text=initials, font=FONT_SUBTITLE, fg="#FFFFFF", bg=ACCENT_BLUE).place(relx=0.5, rely=0.5, anchor="center")
 
-        user_info_frame = tk.Frame(header_frame, bg=BG_MAIN)
+        user_info_frame = tk.Frame(header_frame, bg=BG_CARD)
         user_info_frame.pack(side=tk.LEFT, fill=tk.Y)
-        tk.Label(user_info_frame, text=full_name, font=FONT_SUBTITLE, fg=TEXT_PRIMARY, bg=BG_MAIN).pack(anchor="w")
-        tk.Label(user_info_frame, text=f"Rôle : {role} • KRT Bookings", font=FONT_SMALL, fg=TEXT_SECONDARY, bg=BG_MAIN).pack(anchor="w")
+        tk.Label(user_info_frame, text=full_name, font=FONT_BODY_BOLD, fg=TEXT_PRIMARY, bg=BG_CARD).pack(anchor="w")
+        tk.Label(user_info_frame, text=f"{role} • Équipe Technique KRT", font=FONT_SMALL, fg=TEXT_SECONDARY, bg=BG_CARD).pack(anchor="w")
 
         # --- Main Live Timer Card ---
-        timer_card = tk.Frame(self.container, bg=BG_CARD, padx=20, pady=20, highlightbackground=BORDER_COLOR, highlightthickness=1)
+        timer_card = tk.Frame(self.container, bg=BG_CARD, padx=22, pady=22, highlightbackground=BORDER_COLOR, highlightthickness=1)
         timer_card.pack(fill=tk.X, pady=(0, 16))
+
+        # Eyebrow tag
+        tk.Label(
+            timer_card,
+            text="SESSION EN COURS",
+            font=FONT_EYEBROW,
+            fg=TEXT_MUTED,
+            bg=BG_CARD,
+        ).pack(anchor="center", pady=(0, 6))
 
         # Status Pill Badge
         self.status_badge = tk.Label(
@@ -69,7 +104,7 @@ class DashboardWindow:
             fg=ACCENT_GREEN,
             bg=BG_CARD,
         )
-        self.status_badge.pack(anchor="center", pady=(0, 6))
+        self.status_badge.pack(anchor="center", pady=(0, 8))
 
         # Big Digital Timer
         self.timer_label = tk.Label(
@@ -85,10 +120,10 @@ class DashboardWindow:
             timer_card,
             text="Session démarrée à --:--",
             font=FONT_SMALL,
-            fg=TEXT_MUTED,
+            fg=TEXT_SECONDARY,
             bg=BG_CARD,
         )
-        self.session_started_label.pack(anchor="center", pady=(4, 0))
+        self.session_started_label.pack(anchor="center", pady=(6, 0))
 
         self.session_estimated_end_label = tk.Label(
             timer_card,
@@ -97,29 +132,29 @@ class DashboardWindow:
             fg=TEXT_MUTED,
             bg=BG_CARD,
         )
-        self.session_estimated_end_label.pack(anchor="center", pady=(2, 0))
+        self.session_estimated_end_label.pack(anchor="center", pady=(3, 0))
 
         # --- Live Metrics Grid ---
         metrics_frame = tk.Frame(self.container, bg=BG_MAIN)
         metrics_frame.pack(fill=tk.X, pady=(0, 16))
 
         # Metric 1: Total Today
-        m1 = tk.Frame(metrics_frame, bg=BG_CARD, padx=12, pady=12, highlightbackground=BORDER_COLOR, highlightthickness=1)
+        m1 = tk.Frame(metrics_frame, bg=BG_CARD, padx=14, pady=12, highlightbackground=BORDER_COLOR, highlightthickness=1)
         m1.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
-        tk.Label(m1, text="Total Aujourd'hui", font=FONT_SMALL, fg=TEXT_SECONDARY, bg=BG_CARD).pack(anchor="w")
+        tk.Label(m1, text="TOTAL AUJOURD'HUI", font=FONT_EYEBROW, fg=TEXT_MUTED, bg=BG_CARD).pack(anchor="w")
         self.today_total_label = tk.Label(m1, text="00h 00m", font=FONT_BODY_BOLD, fg=TEXT_PRIMARY, bg=BG_CARD)
-        self.today_total_label.pack(anchor="w", pady=(2, 0))
+        self.today_total_label.pack(anchor="w", pady=(3, 0))
 
         # Metric 2: Heartbeat status
-        m2 = tk.Frame(metrics_frame, bg=BG_CARD, padx=12, pady=12, highlightbackground=BORDER_COLOR, highlightthickness=1)
+        m2 = tk.Frame(metrics_frame, bg=BG_CARD, padx=14, pady=12, highlightbackground=BORDER_COLOR, highlightthickness=1)
         m2.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(6, 0))
-        tk.Label(m2, text="Statut Synchronisation", font=FONT_SMALL, fg=TEXT_SECONDARY, bg=BG_CARD).pack(anchor="w")
+        tk.Label(m2, text="SYNCHRONISATION", font=FONT_EYEBROW, fg=TEXT_MUTED, bg=BG_CARD).pack(anchor="w")
         self.heartbeat_label = tk.Label(m2, text="Connecté (1m)", font=FONT_BODY_BOLD, fg=ACCENT_GREEN, bg=BG_CARD)
-        self.heartbeat_label.pack(anchor="w", pady=(2, 0))
+        self.heartbeat_label.pack(anchor="w", pady=(3, 0))
 
         # --- Action Buttons ---
         actions_frame = tk.Frame(self.container, bg=BG_MAIN)
-        actions_frame.pack(fill=tk.X, pady=(0, 10))
+        actions_frame.pack(fill=tk.X, pady=(0, 8))
 
         self.pause_resume_btn = tk.Button(
             actions_frame,
@@ -133,7 +168,7 @@ class DashboardWindow:
             cursor="hand2",
             command=self._toggle_pause,
         )
-        self.pause_resume_btn.pack(fill=tk.X, ipady=6, pady=(0, 8))
+        self.pause_resume_btn.pack(fill=tk.X, ipady=7, pady=(0, 8))
 
         self.end_day_btn = tk.Button(
             actions_frame,
@@ -147,7 +182,7 @@ class DashboardWindow:
             cursor="hand2",
             command=self._confirm_end_day,
         )
-        self.end_day_btn.pack(fill=tk.X, ipady=6)
+        self.end_day_btn.pack(fill=tk.X, ipady=7)
 
         # Footer frame with Version and Check Update link
         footer_frame = tk.Frame(self.container, bg=BG_MAIN)
@@ -156,7 +191,7 @@ class DashboardWindow:
         from agent.config import APP_VERSION
         version_label = tk.Label(
             footer_frame,
-            text=f"v{APP_VERSION}",
+            text=f"v{APP_VERSION} • krtstudios.tv",
             font=FONT_SMALL,
             fg=TEXT_MUTED,
             bg=BG_MAIN,
@@ -193,7 +228,7 @@ class DashboardWindow:
             cursor="hand2",
             command=self.hide,
         )
-        minimize_btn.pack(fill=tk.X, side=tk.BOTTOM, ipady=4)
+        minimize_btn.pack(fill=tk.X, side=tk.BOTTOM, ipady=5)
 
     def _toggle_pause(self):
         if self.agent.status == "active":
@@ -264,3 +299,4 @@ class DashboardWindow:
         logger.info("Hiding Dashboard Window to systray.")
         self._is_visible = False
         self.top.withdraw()
+
