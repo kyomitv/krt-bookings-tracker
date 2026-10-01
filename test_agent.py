@@ -218,6 +218,35 @@ class TestKRTAgent(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(client.access_token, "new_valid_token")
 
+    def test_update_modal_creation(self):
+        from agent.agent import KRTTrackerAgent
+        from agent.ui.update_modal import UpdateModal
+        from agent.updater import ReleaseInfo, AutoUpdater
+        agent = KRTTrackerAgent()
+
+        sample_release = ReleaseInfo(
+            tag_name="v1.0.5",
+            name="Version 1.0.5",
+            body="Test release notes",
+            html_url="https://github.com/...",
+            asset_name="KRT-Bookings-Tracker.exe",
+            download_url="https://github.com/...",
+            asset_size=1048576,
+            published_at="2026-10-01T00:00:00Z"
+        )
+        updater = AutoUpdater(current_version="1.0.4")
+        modal = UpdateModal(
+            parent=agent.root,
+            release_info=sample_release,
+            updater=updater
+        )
+        self.assertIsNotNone(modal.top)
+        self.assertTrue(modal.top.winfo_exists())
+        modal.top.destroy()
+        agent.root.update_idletasks()
+        agent._has_shutdown = True
+        agent.root.destroy()
+
     def test_version_display_format(self):
         from agent.config import APP_VERSION, APP_VERSION_DISPLAY
         self.assertFalse(APP_VERSION.startswith("v"))

@@ -10,7 +10,8 @@ from typing import Optional, Dict, Any
 
 from agent.config import (
     APP_NAME, APP_VERSION, APP_VERSION_DISPLAY, HEARTBEAT_INTERVAL_SECONDS,
-    UPDATE_CHECK_ON_STARTUP, UPDATE_CHECK_INTERVAL_SECONDS
+    UPDATE_CHECK_ON_STARTUP, UPDATE_CHECK_INTERVAL_SECONDS, UPDATER_LOG_PATH,
+    get_executable_path
 )
 from agent.crypto_storage import SecureStorage
 from agent.supabase_client import SupabaseClient
@@ -398,29 +399,84 @@ class KRTTrackerAgent:
             exe_path = Path(get_executable_path()).resolve()
 
             if sys.platform == "win32":
-                bat_path = Path(tempfile.gettempdir()) / f"krt_restart_{pid}.bat"
-                if getattr(sys, "frozen", False):
-                    cmd_to_run = f'start "" "{exe_path}"'
-                else:
-                    cmd_to_run = f'start "" "{sys.executable}" "{exe_path}"'
+                is_frozen = getattr(sys, "frozen", False)
+                ps_path = Path(tempfile.gettempdir()) / f"krt_restart_{pid}.ps1"
 
-                script_content = f"""@echo off
-set "PID={pid}"
-:wait_loop
-tasklist /FI "PID eq %PID%" 2>NUL | find /I "%PID%" >NUL
-if "%ERRORLEVEL%"=="0" (
-    timeout /t 1 /nobreak >nul
-    goto wait_loop
-)
-timeout /t 1 /nobreak >nul
-{cmd_to_run}
-(goto) 2>nul & del "%~f0"
+                work_dir = str(exe_path.parent)
+                updater_log_str = str(UPDATER_LOG_PATH.resolve())
+                if is_frozen:
+                    ps_script = f"""
+$logPath = "{updater_log_str}"
+function Log($text) {{
+    $time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    "[$time] [Restart] $text" | Out-File -FilePath $logPath -Append -Encoding utf8
+}}
+
+Log "--- Starting app restart ---"
+Log "Target PID: {pid}"
+Log "Executable: {str(exe_path)}"
+Log "Work dir: {work_dir}"
+
+try {{
+    Log "Waiting for process {pid}..."
+    Wait-Process -Id {pid} -Timeout 2 -ErrorAction SilentlyContinue
+    Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
+}} catch {{}}
+
+Start-Sleep -Seconds 1
+
+try {{
+    Log "Launching executable: {str(exe_path)}..."
+    $proc = Start-Process -FilePath "{str(exe_path)}" -WorkingDirectory "{work_dir}" -PassThru
+    Log "Application restarted with PID: $($proc.Id)"
+}} catch {{
+    Log "ERROR restarting process: $_"
+}}
+
+Log "--- App restart complete ---"
+Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 """
-                bat_path.write_text(script_content, encoding="utf-8")
-                creation_flags = 0x00000008 | 0x08000000  # DETACHED_PROCESS | CREATE_NO_WINDOW
+                else:
+                    ps_script = f"""
+$logPath = "{updater_log_str}"
+function Log($text) {{
+    $time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    "[$time] [Restart] $text" | Out-File -FilePath $logPath -Append -Encoding utf8
+}}
+
+Log "--- Starting dev mode restart ---"
+try {{
+    Wait-Process -Id {pid} -Timeout 2 -ErrorAction SilentlyContinue
+    Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
+}} catch {{}}
+
+Start-Sleep -Seconds 1
+
+try {{
+    $proc = Start-Process -FilePath "{sys.executable}" -ArgumentList '"{str(exe_path)}"' -WorkingDirectory "{work_dir}" -PassThru
+    Log "Dev process restarted with PID: $($proc.Id)"
+}} catch {{
+    Log "ERROR restarting dev process: $_"
+}}
+
+Log "--- Dev mode restart complete ---"
+Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+"""
+
+                ps_path.write_text(ps_script, encoding="utf-8")
+                creation_flags = 0x00000200 | 0x08000000  # CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
                 subprocess.Popen(
-                    ["cmd.exe", "/c", str(bat_path)],
+                    [
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy", "Bypass",
+                        "-File", str(ps_path)
+                    ],
                     creationflags=creation_flags,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                     close_fds=True
                 )
             else:
@@ -436,6 +492,7 @@ timeout /t 1 /nobreak >nul
             self.root.destroy()
         except Exception:
             pass
+        os._exit(0)
 
     def _show_connection_alert(self):
         """Displays or focuses the connection lost alert modal."""
@@ -523,15 +580,16 @@ timeout /t 1 /nobreak >nul
             if release_info:
                 logger.info(f"Update available: {release_info.tag_name}")
                 def open_modal():
+                    parent_win = self.dashboard.top if (self.dashboard and self.dashboard.top.winfo_exists() and self.dashboard._is_visible) else self.root
                     if not self._update_modal or not self._update_modal.top.winfo_exists():
                         self._update_modal = UpdateModal(
-                            parent=self.root,
+                            parent=parent_win,
                             release_info=release_info,
                             updater=self.updater,
                             on_before_restart=self._prepare_restart
                         )
                     else:
-                        self._update_modal.top.lift()
+                        self._update_modal.show()
                 self.root.after(0, open_modal)
             elif manual:
                 logger.info("Application is up to date.")
@@ -579,13 +637,7 @@ timeout /t 1 /nobreak >nul
     def _prepare_restart(self):
         """Prepares the agent for update restart by closing active sessions/threads cleanly."""
         logger.info("Preparing for application restart post-update...")
-        if self.status == "active" and self.current_session_id:
-            elapsed = self.get_current_session_seconds()
-            self.client.pause_session(self.current_session_id, elapsed)
-        self._running = False
-        self.systray.stop()
-        if self.single_instance_lock:
-            self.single_instance_lock.release()
+        self.shutdown_cleanup()
 
     # ==================== UI OPENERS ====================
 

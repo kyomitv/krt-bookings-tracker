@@ -6,7 +6,6 @@ Aesthetic inspired by krtstudios.tv.
 import sys
 import threading
 import tkinter as tk
-from tkinter import ttk
 from typing import Optional, Callable
 
 from agent.config import APP_VERSION, APP_VERSION_DISPLAY
@@ -14,10 +13,9 @@ from agent.updater import ReleaseInfo, AutoUpdater
 from agent.ui.theme import (
     BG_MAIN, BG_CARD, BG_CARD_HOVER, BG_INPUT, BORDER_COLOR,
     TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED, ACCENT_BLUE,
-    ACCENT_BLUE_HOVER, ACCENT_GREEN, ACCENT_GREEN_HOVER,
-    ACCENT_RED, FONT_TITLE, FONT_SUBTITLE, FONT_BODY,
-    FONT_BODY_BOLD, FONT_SMALL, FONT_EYEBROW, FONT_BADGE,
-    apply_window_theme, center_window, get_krt_logo_tk
+    ACCENT_BLUE_HOVER, ACCENT_GREEN, ACCENT_RED, FONT_TITLE,
+    FONT_BODY, FONT_BODY_BOLD, FONT_SMALL, FONT_BADGE,
+    apply_window_theme, center_window
 )
 from agent.logger import logger
 
@@ -25,7 +23,7 @@ from agent.logger import logger
 class UpdateModal:
     """Dialog displaying new release information, changelog, and one-click update installation."""
 
-    def __init__(self, parent: tk.Tk, release_info: ReleaseInfo, updater: AutoUpdater, on_before_restart: Optional[Callable[[], None]] = None):
+    def __init__(self, parent: tk.Tk | tk.Toplevel, release_info: ReleaseInfo, updater: AutoUpdater, on_before_restart: Optional[Callable[[], None]] = None):
         self.parent = parent
         self.release_info = release_info
         self.updater = updater
@@ -36,11 +34,16 @@ class UpdateModal:
         apply_window_theme(self.top, title=f"Mise à jour disponible — {self.release_info.tag_name}")
         self.top.attributes("-topmost", True)
 
-        # Modal grab
-        self.top.transient(self.parent)
+        # Only make transient if parent is a visible toplevel window (not hidden root)
+        try:
+            if hasattr(self.parent, "winfo_viewable") and self.parent.winfo_viewable():
+                self.top.transient(self.parent)
+        except Exception:
+            pass
 
         self._build_ui()
         center_window(self.top, width=580, height=560)
+        self.show()
 
     def _build_ui(self):
         container = tk.Frame(self.top, bg=BG_MAIN, padx=24, pady=20)
@@ -218,7 +221,7 @@ class UpdateModal:
                 text=f"Téléchargement : {percent:.1f}% ({d_mb:.1f} / {t_mb:.1f} Mo)",
                 fg=TEXT_PRIMARY,
             )
-        self.parent.after(0, apply)
+        self.top.after(0, apply)
 
     def _start_update_download(self):
         """Initiates the download and installation in a background thread."""
@@ -242,21 +245,21 @@ class UpdateModal:
                     self.status_label.config(text="❌ Échec du téléchargement. Veuillez réessayer.", fg=ACCENT_RED)
                     self.update_btn.config(state=tk.NORMAL, text="Réessayer")
                     self.later_btn.config(state=tk.NORMAL)
-                self.parent.after(0, on_error)
+                self.top.after(0, on_error)
                 return
 
             def on_install():
                 self.status_label.config(text="⚡ Application de la mise à jour et redémarrage...", fg=ACCENT_GREEN)
                 # Give UI 500ms to refresh
-                self.parent.after(500, lambda: self._execute_restart(downloaded_file))
+                self.top.after(500, lambda: self._execute_restart(downloaded_file))
 
-            self.parent.after(0, on_install)
+            self.top.after(0, on_install)
 
         thread = threading.Thread(target=worker, daemon=True, name="UpdateDownloadThread")
         thread.start()
 
     def _execute_restart(self, new_binary):
-        """Calls on_before_restart if provided, then replaces binary and exits."""
+        """Calls on_before_restart if provided, then replaces binary and exits cleanly."""
         if self.on_before_restart:
             try:
                 self.on_before_restart()
@@ -265,16 +268,30 @@ class UpdateModal:
 
         success = self.updater.apply_update_and_restart(new_binary)
         if success:
-            logger.info("Restart initiated. Closing current instance.")
+            logger.info("Restart initiated. Terminating application for updater script.")
+            import os
             try:
-                self.parent.destroy()
+                self.top.destroy()
             except Exception:
                 pass
-            sys.exit(0)
+            os._exit(0)
         else:
             self.status_label.config(text="❌ Erreur lors de l'application de la mise à jour.", fg=ACCENT_RED)
             self.later_btn.config(state=tk.NORMAL)
 
     def _on_close(self):
         if not self.is_downloading:
-            self.top.destroy()
+            try:
+                self.top.destroy()
+            except Exception:
+                pass
+
+    def show(self):
+        """Displays or brings the modal to front."""
+        try:
+            self.top.deiconify()
+            self.top.lift()
+            self.top.attributes("-topmost", True)
+            self.top.focus_force()
+        except Exception:
+            pass

@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any, Callable
 from pathlib import Path
 import requests
 
-from agent.config import APP_VERSION, GITHUB_REPO, get_executable_path
+from agent.config import APP_VERSION, GITHUB_REPO, get_executable_path, UPDATER_LOG_PATH
 from agent.logger import logger
 
 
@@ -219,41 +219,134 @@ class AutoUpdater:
 
         try:
             if sys.platform == "win32":
-                # Create a batch script in temp dir to swap file after exit
-                bat_path = Path(tempfile.gettempdir()) / "krt_update_swap.bat"
                 pid = os.getpid()
+                ps_path = Path(tempfile.gettempdir()) / f"krt_update_swap_{pid}.ps1"
+                is_frozen = getattr(sys, "frozen", False)
 
-                script_content = f"""@echo off
-chcp 65001 >nul
-setlocal
-set "PID={pid}"
-set "SRC={str(new_binary_path.resolve())}"
-set "DST={str(current_exe)}"
+                src_str = str(new_binary_path.resolve())
+                dst_str = str(current_exe)
+                dst_dir = str(current_exe.parent)
+                updater_log_str = str(UPDATER_LOG_PATH.resolve())
 
-echo [KRT Updater] Waiting for application (PID %PID%) to terminate...
-:wait_loop
-tasklist /FI "PID eq %PID%" 2>NUL | find /I "%PID%" >NUL
-if "%ERRORLEVEL%"=="0" (
-    timeout /t 1 /nobreak >nul
-    goto wait_loop
-)
+                if is_frozen:
+                    ps_script = f"""
+$logPath = "{updater_log_str}"
+function Log($text) {{
+    $time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    "[$time] [Updater] $text" | Out-File -FilePath $logPath -Append -Encoding utf8
+}}
 
-echo [KRT Updater] Replacing binary...
-copy /y "%SRC%" "%DST%" >nul
-if exist "%SRC%" del /f /q "%SRC%" >nul
+Log "--- Starting update swap ---"
+Log "Target PID: {pid}"
+Log "Source binary: {src_str}"
+Log "Destination: {dst_str}"
+Log "Work dir: {dst_dir}"
 
-echo [KRT Updater] Restarting application...
-start "" "%DST%"
+try {{
+    Log "Waiting for process {pid} to terminate..."
+    Wait-Process -Id {pid} -Timeout 2 -ErrorAction SilentlyContinue
+}} catch {{
+    Log "Wait-Process notice: $_"
+}}
 
-(goto) 2>nul & del "%~f0"
+try {{
+    Log "Stopping process {pid} (force)..."
+    Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
+}} catch {{}}
+
+Start-Sleep -Seconds 1
+
+if (-not (Test-Path "{src_str}")) {{
+    Log "ERROR: Source file not found: {src_str}"
+    exit 1
+}}
+
+$copied = $false
+for ($i = 1; $i -le 20; $i++) {{
+    try {{
+        Log "Copying binary (attempt $i/20)..."
+        Copy-Item -Path "{src_str}" -Destination "{dst_str}" -Force -ErrorAction Stop
+        $copied = $true
+        Log "Binary copied successfully!"
+        break
+    }} catch {{
+        Log "Copy failed on attempt $i : $_"
+        Start-Sleep -Seconds 1
+    }}
+}}
+
+if (-not $copied) {{
+    Log "FATAL: Could not replace destination binary."
+    exit 1
+}}
+
+try {{
+    Remove-Item -Path "{src_str}" -Force -ErrorAction SilentlyContinue
+    Log "Source temp file deleted."
+}} catch {{}}
+
+Start-Sleep -Milliseconds 500
+
+try {{
+    Log "Launching updated application: {dst_str}..."
+    $proc = Start-Process -FilePath "{dst_str}" -WorkingDirectory "{dst_dir}" -PassThru
+    Log "Application started successfully with new PID: $($proc.Id)"
+}} catch {{
+    Log "ERROR launching process: $_"
+}}
+
+Log "--- Update swap complete ---"
+Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 """
-                bat_path.write_text(script_content, encoding="utf-8")
-                logger.info(f"[Updater] Spawned updater script: {bat_path}")
+                else:
+                    # Dev mode / not frozen: launch downloaded binary directly
+                    ps_script = f"""
+$logPath = "{updater_log_str}"
+function Log($text) {{
+    $time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+    "[$time] [Updater] $text" | Out-File -FilePath $logPath -Append -Encoding utf8
+}}
 
-                creation_flags = 0x00000008 | 0x08000000 # DETACHED_PROCESS | CREATE_NO_WINDOW
+Log "--- Starting dev mode update launch ---"
+Log "Source binary: {src_str}"
+
+try {{
+    Wait-Process -Id {pid} -Timeout 2 -ErrorAction SilentlyContinue
+    Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
+}} catch {{}}
+
+Start-Sleep -Seconds 1
+
+try {{
+    Log "Launching binary directly: {src_str}..."
+    $proc = Start-Process -FilePath "{src_str}" -WorkingDirectory "{dst_dir}" -PassThru
+    Log "Application started with PID: $($proc.Id)"
+}} catch {{
+    Log "ERROR launching process: $_"
+}}
+
+Log "--- Dev mode launch complete ---"
+Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+"""
+
+                ps_path.write_text(ps_script, encoding="utf-8")
+                logger.info(f"[Updater] Spawned updater script: {ps_path}")
+
+                # 0x00000200 (CREATE_NEW_PROCESS_GROUP) | 0x08000000 (CREATE_NO_WINDOW)
+                # Note: Do NOT use DETACHED_PROCESS (0x08) as it breaks powershell.exe console subsystem
+                creation_flags = 0x00000200 | 0x08000000
                 subprocess.Popen(
-                    ["cmd.exe", "/c", str(bat_path)],
+                    [
+                        "powershell.exe",
+                        "-NoProfile",
+                        "-NonInteractive",
+                        "-ExecutionPolicy", "Bypass",
+                        "-File", str(ps_path)
+                    ],
                     creationflags=creation_flags,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                     close_fds=True
                 )
                 return True
