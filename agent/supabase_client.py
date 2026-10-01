@@ -1,18 +1,21 @@
 """
 Supabase API Client for KRT Bookings Tracker.
-Handles authentication, profile fetching, work sessions, and heartbeats.
+Handles authentication, profile fetching, work sessions, heartbeats, and auto-refresh/reconnection.
 """
 import platform
 import socket
 import datetime
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from typing import Optional, Dict, Any, Tuple, Callable
 from agent.config import SUPABASE_URL, SUPABASE_ANON_KEY
 from agent.logger import logger
 import time
 
+
 class SupabaseClient:
-    """Direct lightweight client for Supabase REST API & GoTrue Auth."""
+    """Direct lightweight client for Supabase REST API & GoTrue Auth with auto-reconnection and token refresh."""
 
     def __init__(
         self,
@@ -28,6 +31,18 @@ class SupabaseClient:
         self.user_id = user_id
         self.user_profile: Optional[Dict[str, Any]] = None
         self.on_tokens_updated = on_tokens_updated
+
+        # Setup persistent HTTP session with connection pooling
+        self.session = requests.Session()
+        retry_strategy = Retry(
+            total=2,
+            backoff_factor=0.3,
+            status_forcelist=[502, 503, 504],
+            raise_on_status=False
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=5, pool_maxsize=10)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def is_authenticated(self) -> bool:
         """Checks if current client has valid user_id and tokens."""
@@ -68,6 +83,49 @@ class SupabaseClient:
             "python_version": platform.python_version(),
         }
 
+    def _request(
+        self,
+        method: str,
+        url: str,
+        authenticated: bool = True,
+        timeout: int = 10,
+        headers: Optional[Dict[str, str]] = None,
+        **kwargs
+    ) -> requests.Response:
+        """
+        Robust HTTP request dispatcher with auto-refresh on 401/403 and transient error retry.
+        """
+        req_headers = headers or self._get_headers(authenticated=authenticated)
+        for attempt in range(2):
+            try:
+                resp = self.session.request(method, url, headers=req_headers, timeout=timeout, **kwargs)
+                # If token expired and we have a refresh token, auto-refresh and retry once
+                if authenticated and resp.status_code in (401, 403) and self.refresh_token and attempt == 0:
+                    logger.info("Received 401/403 unauthorized. Attempting automatic session refresh...")
+                    if self.refresh_session():
+                        req_headers = headers or self._get_headers(authenticated=True)
+                        if "headers" in kwargs:
+                            del kwargs["headers"]
+                        continue
+                return resp
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as net_err:
+                logger.warning(f"Network error on {method} {url} (attempt {attempt + 1}/2): {net_err}")
+                if attempt == 0:
+                    time.sleep(0.8)
+                else:
+                    raise net_err
+
+        # Fallback in case loop exited without returning
+        return self.session.request(method, url, headers=req_headers, timeout=timeout, **kwargs)
+
+    def test_connection(self) -> bool:
+        """Tests if connection to Supabase is active and working."""
+        try:
+            return self.verify_token()
+        except Exception as e:
+            logger.warning(f"test_connection failed: {e}")
+            return False
+
     # ==================== AUTHENTICATION ====================
 
     def sign_in_with_password(self, email: str, password: str) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]]]:
@@ -79,7 +137,7 @@ class SupabaseClient:
             "password": password,
         }
         try:
-            resp = requests.post(url, headers=self._get_headers(authenticated=False), json=payload, timeout=12)
+            resp = self._request("POST", url, authenticated=False, json=payload, timeout=12)
             logger.debug(f"Auth response code: {resp.status_code}")
             if resp.status_code == 200:
                 data = resp.json()
@@ -120,7 +178,7 @@ class SupabaseClient:
         url = f"{self.base_url}/auth/v1/token?grant_type=refresh_token"
         payload = {"refresh_token": self.refresh_token}
         try:
-            resp = requests.post(url, headers=self._get_headers(authenticated=False), json=payload, timeout=10)
+            resp = self.session.post(url, headers=self._get_headers(authenticated=False), json=payload, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
                 self.access_token = data.get("access_token")
@@ -151,7 +209,7 @@ class SupabaseClient:
         for attempt in range(3):
             try:
                 if self.access_token:
-                    resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
+                    resp = self.session.get(url, headers=self._get_headers(authenticated=True), timeout=8)
                     if resp.status_code == 200:
                         user_data = resp.json()
                         self.user_id = user_data.get("id")
@@ -193,7 +251,7 @@ class SupabaseClient:
             return None
         url = f"{self.base_url}/rest/v1/profiles?id=eq.{self.user_id}&select=*"
         try:
-            resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
+            resp = self._request("GET", url, authenticated=True, timeout=8)
             if resp.status_code == 200:
                 rows = resp.json()
                 if rows and len(rows) > 0:
@@ -218,7 +276,7 @@ class SupabaseClient:
         today_start = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
         url = f"{self.base_url}/rest/v1/hr_work_sessions?user_id=eq.{self.user_id}&status=in.(active,paused)&started_at=gte.{today_start}&order=started_at.desc&limit=1&select=*"
         try:
-            resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
+            resp = self._request("GET", url, authenticated=True, timeout=8)
             if resp.status_code == 200:
                 rows = resp.json()
                 if rows and isinstance(rows, list):
@@ -245,7 +303,7 @@ class SupabaseClient:
         url += "&select=id,last_heartbeat_at,updated_at,started_at,duration_seconds,notes"
 
         try:
-            resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
+            resp = self._request("GET", url, authenticated=True, timeout=8)
             if resp.status_code != 200:
                 logger.warning(f"Could not fetch stale sessions ({resp.status_code}): {resp.text}")
                 return 0
@@ -274,7 +332,7 @@ class SupabaseClient:
                     "notes": new_notes,
                     "updated_at": now_iso,
                 }
-                patch_resp = requests.patch(patch_url, headers=self._get_headers(authenticated=True), json=patch_payload, timeout=8)
+                patch_resp = self._request("PATCH", patch_url, authenticated=True, json=patch_payload, timeout=8)
                 if patch_resp.status_code in (200, 204):
                     closed_count += 1
                     self.log_activity(sid, "SESSION_CLOSED_ON_SHUTDOWN", {
@@ -311,7 +369,7 @@ class SupabaseClient:
             "device_info": self._get_device_info(),
         }
         try:
-            resp = requests.post(url, headers=self._get_headers(authenticated=True), json=payload, timeout=10)
+            resp = self._request("POST", url, authenticated=True, json=payload, timeout=10)
             logger.debug(f"start_work_session status: {resp.status_code}, response: {resp.text}")
             if resp.status_code in (200, 201):
                 rows = resp.json()
@@ -338,7 +396,7 @@ class SupabaseClient:
             return None
         url = f"{self.base_url}/rest/v1/hr_work_sessions?id=eq.{session_id}&select=*"
         try:
-            resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
+            resp = self._request("GET", url, authenticated=True, timeout=8)
             if resp.status_code == 200:
                 rows = resp.json()
                 if rows and isinstance(rows, list):
@@ -363,10 +421,8 @@ class SupabaseClient:
             "duration_seconds": elapsed_seconds,
             "updated_at": now_iso,
         }
-        headers = self._get_headers(authenticated=True)
-        headers["Prefer"] = "return=representation"
         try:
-            resp = requests.patch(url, headers=headers, json=payload, timeout=8)
+            resp = self._request("PATCH", url, authenticated=True, json=payload, timeout=8)
             success = resp.status_code in (200, 204)
             data = None
             if success and resp.text:
@@ -397,7 +453,7 @@ class SupabaseClient:
             "updated_at": now_iso,
         }
         try:
-            resp = requests.patch(url, headers=self._get_headers(authenticated=True), json=payload, timeout=8)
+            resp = self._request("PATCH", url, authenticated=True, json=payload, timeout=8)
             if resp.status_code in (200, 204):
                 self.log_activity(session_id, "PAUSE", {"duration_seconds": elapsed_seconds})
                 logger.info(f"Session {session_id} paused at {elapsed_seconds}s")
@@ -420,7 +476,7 @@ class SupabaseClient:
             "updated_at": now_iso,
         }
         try:
-            resp = requests.patch(url, headers=self._get_headers(authenticated=True), json=payload, timeout=8)
+            resp = self._request("PATCH", url, authenticated=True, json=payload, timeout=8)
             if resp.status_code in (200, 204):
                 self.log_activity(session_id, "RESUME", {})
                 logger.info(f"Session {session_id} resumed")
@@ -448,7 +504,7 @@ class SupabaseClient:
         }
         for attempt in range(3):
             try:
-                resp = requests.patch(url, headers=self._get_headers(authenticated=True), json=payload, timeout=8)
+                resp = self._request("PATCH", url, authenticated=True, json=payload, timeout=8)
                 if resp.status_code in (200, 204):
                     self.log_activity(session_id, "END_WORK", {
                         "total_duration_seconds": total_duration_seconds,
@@ -474,7 +530,7 @@ class SupabaseClient:
             "metadata": metadata or {},
         }
         try:
-            resp = requests.post(url, headers=self._get_headers(authenticated=True), json=payload, timeout=6)
+            resp = self._request("POST", url, authenticated=True, json=payload, timeout=6)
             return resp.status_code in (200, 201)
         except Exception as e:
             logger.warning(f"Log activity exception: {e}")
@@ -490,7 +546,7 @@ class SupabaseClient:
 
         url = f"{self.base_url}/rest/v1/hr_work_sessions?user_id=eq.{self.user_id}&started_at=gte.{today_start}&select=duration_seconds,status"
         try:
-            resp = requests.get(url, headers=self._get_headers(authenticated=True), timeout=8)
+            resp = self._request("GET", url, authenticated=True, timeout=8)
             if resp.status_code == 200:
                 rows = resp.json()
                 total_sec = sum(r.get("duration_seconds", 0) for r in rows)

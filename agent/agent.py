@@ -373,37 +373,69 @@ class KRTTrackerAgent:
                 pass
 
     def _execute_end_work_and_quit(self):
-        """Finalizes session on Supabase and exits application."""
+        """Finalizes session on Supabase and exits application cleanly."""
         logger.info("User requested work termination. Finalizing session and exiting...")
         self.shutdown_cleanup()
         try:
+            self.root.quit()
             self.root.destroy()
         except Exception:
             pass
-        sys.exit(0)
 
     def restart_app(self):
-        """Restarts the application executable or script cleanly."""
+        """Restarts the application executable or script cleanly without raising uncaught exceptions."""
         logger.info("Restarting application requested...")
         import subprocess
+        import os
+        import tempfile
+        from pathlib import Path
         from agent.config import get_executable_path
 
         self.shutdown_cleanup()
 
         try:
-            exe_path = get_executable_path()
-            if getattr(sys, "frozen", False):
-                subprocess.Popen([exe_path])
+            pid = os.getpid()
+            exe_path = Path(get_executable_path()).resolve()
+
+            if sys.platform == "win32":
+                bat_path = Path(tempfile.gettempdir()) / f"krt_restart_{pid}.bat"
+                if getattr(sys, "frozen", False):
+                    cmd_to_run = f'start "" "{exe_path}"'
+                else:
+                    cmd_to_run = f'start "" "{sys.executable}" "{exe_path}"'
+
+                script_content = f"""@echo off
+set "PID={pid}"
+:wait_loop
+tasklist /FI "PID eq %PID%" 2>NUL | find /I "%PID%" >NUL
+if "%ERRORLEVEL%"=="0" (
+    timeout /t 1 /nobreak >nul
+    goto wait_loop
+)
+timeout /t 1 /nobreak >nul
+{cmd_to_run}
+(goto) 2>nul & del "%~f0"
+"""
+                bat_path.write_text(script_content, encoding="utf-8")
+                creation_flags = 0x00000008 | 0x08000000  # DETACHED_PROCESS | CREATE_NO_WINDOW
+                subprocess.Popen(
+                    ["cmd.exe", "/c", str(bat_path)],
+                    creationflags=creation_flags,
+                    close_fds=True
+                )
             else:
-                subprocess.Popen([sys.executable] + sys.argv)
+                if getattr(sys, "frozen", False):
+                    subprocess.Popen([str(exe_path)], start_new_session=True)
+                else:
+                    subprocess.Popen([sys.executable, str(exe_path)], start_new_session=True)
         except Exception as e:
             logger.error(f"Failed to spawn new process on restart: {e}")
 
         try:
+            self.root.quit()
             self.root.destroy()
         except Exception:
             pass
-        sys.exit(0)
 
     def _show_connection_alert(self):
         """Displays or focuses the connection lost alert modal."""
@@ -411,12 +443,43 @@ class KRTTrackerAgent:
             self._connection_alert_modal = ConnectionAlertModal(
                 parent=self.root,
                 on_restart=self.restart_app,
+                on_retry=self.retry_connection,
                 on_dismiss=self._dismiss_connection_alert,
             )
         self._connection_alert_modal.show()
 
     def _dismiss_connection_alert(self):
+        if self._connection_alert_modal:
+            self._connection_alert_modal.close()
         self._connection_alert_modal = None
+
+    def retry_connection(self):
+        """Attempts an immediate manual reconnection and updates modal/UI."""
+        def _worker():
+            logger.info("Attempting manual reconnection to Supabase...")
+            ok = self.client.test_connection()
+            if ok:
+                self.is_connected = True
+                self._consecutive_heartbeat_failures = 0
+                if self.status in ("active", "paused") and self.current_session_id:
+                    elapsed = self.get_current_session_seconds()
+                    self.client.send_heartbeat(self.current_session_id, elapsed)
+
+                def _on_success():
+                    if self._connection_alert_modal:
+                        self._connection_alert_modal.set_status_message("Connexion rétablie avec succès !", "#10B981")
+                        self.root.after(800, self._dismiss_connection_alert)
+                    if self.dashboard:
+                        self.dashboard.update_timer_display(self.get_current_session_seconds(), self.get_today_total_seconds(), self.status)
+
+                self.root.after(0, _on_success)
+            else:
+                def _on_fail():
+                    if self._connection_alert_modal:
+                        self._connection_alert_modal.set_status_message("Impossible de joindre le serveur. Veuillez vérifier votre réseau.", "#EF4444")
+                self.root.after(0, _on_fail)
+
+        threading.Thread(target=_worker, daemon=True, name="ManualReconnectionWorker").start()
 
     # ==================== BACKGROUND HEARTBEAT ====================
 
@@ -434,13 +497,18 @@ class KRTTrackerAgent:
                 self.is_connected = success
                 if success:
                     self.last_heartbeat_time = time.time()
-                    self._consecutive_heartbeat_failures = 0
+                    if self._consecutive_heartbeat_failures > 0:
+                        logger.info(f"Connection restored successfully after {self._consecutive_heartbeat_failures} failed heartbeat(s).")
+                        self._consecutive_heartbeat_failures = 0
+                        if self._connection_alert_modal:
+                            self.root.after(0, self._dismiss_connection_alert)
                     if session_data:
                         self._sync_session_from_remote(session_data)
                 else:
                     self._consecutive_heartbeat_failures += 1
                     logger.warning(f"Heartbeat failed ({self._consecutive_heartbeat_failures} consecutive failure(s)).")
-                    if self._consecutive_heartbeat_failures == 2:
+                    # Trigger alert after 4 consecutive failures (~2 minutes of sustained disconnection)
+                    if self._consecutive_heartbeat_failures == 4:
                         self.root.after(0, self._show_connection_alert)
 
 

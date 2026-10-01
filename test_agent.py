@@ -177,15 +177,46 @@ class TestKRTAgent(unittest.TestCase):
         agent = KRTTrackerAgent()
 
         restart_called = []
+        retry_called = []
         modal = ConnectionAlertModal(
             parent=agent.root,
             on_restart=lambda: restart_called.append(True),
+            on_retry=lambda: retry_called.append(True),
         )
         self.assertIsNotNone(modal.top)
+        modal._retry()
+        self.assertTrue(len(retry_called) > 0)
         modal._restart()
         self.assertTrue(len(restart_called) > 0)
         agent._has_shutdown = True
         agent.root.destroy()
+
+    def test_supabase_auto_refresh_on_401(self):
+        from unittest.mock import MagicMock
+        client = SupabaseClient()
+        client.access_token = "expired_token"
+        client.refresh_token = "valid_refresh_token"
+        client.user_id = "test-user-id"
+
+        # Mock refresh_session to succeed and update access_token
+        def mock_refresh():
+            client.access_token = "new_valid_token"
+            return True
+
+        client.refresh_session = mock_refresh
+
+        # Mock session.request: first call returns 401, second call returns 200
+        mock_resp_401 = MagicMock()
+        mock_resp_401.status_code = 401
+        mock_resp_200 = MagicMock()
+        mock_resp_200.status_code = 200
+        mock_resp_200.json.return_value = [{"id": "session-123", "status": "active"}]
+
+        client.session.request = MagicMock(side_effect=[mock_resp_401, mock_resp_200])
+
+        resp = client._request("GET", f"{client.base_url}/rest/v1/hr_work_sessions", authenticated=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(client.access_token, "new_valid_token")
 
     def test_version_display_format(self):
         from agent.config import APP_VERSION, APP_VERSION_DISPLAY
