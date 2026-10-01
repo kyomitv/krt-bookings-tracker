@@ -220,7 +220,7 @@ class AutoUpdater:
         try:
             if sys.platform == "win32":
                 pid = os.getpid()
-                ps_path = Path(tempfile.gettempdir()) / f"krt_update_swap_{pid}.ps1"
+                bat_path = Path(tempfile.gettempdir()) / f"krt_update_swap_{pid}.bat"
                 is_frozen = getattr(sys, "frozen", False)
 
                 src_str = str(new_binary_path.resolve())
@@ -229,124 +229,76 @@ class AutoUpdater:
                 updater_log_str = str(UPDATER_LOG_PATH.resolve())
 
                 if is_frozen:
-                    ps_script = f"""
-$logPath = "{updater_log_str}"
-function Log($text) {{
-    $time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-    "[$time] [Updater] $text" | Out-File -FilePath $logPath -Append -Encoding utf8
-}}
+                    bat_script = f"""@echo off
+setlocal
+set "LOGFILE={updater_log_str}"
+echo [%date% %time%] [Updater] Starting atomic update swap >> "%LOGFILE%"
+echo [%date% %time%] [Updater] Target PID: {pid} >> "%LOGFILE%"
+echo [%date% %time%] [Updater] Source binary: {src_str} >> "%LOGFILE%"
+echo [%date% %time%] [Updater] Destination: {dst_str} >> "%LOGFILE%"
 
-Log "--- Starting update swap ---"
-Log "Target PID: {pid}"
-Log "Source binary: {src_str}"
-Log "Destination: {dst_str}"
-Log "Work dir: {dst_dir}"
+:: 1. Force kill the running application process tree
+echo [%date% %time%] [Updater] Terminating process {pid}... >> "%LOGFILE%"
+taskkill /F /T /PID {pid} >> "%LOGFILE%" 2>&1
+ping 127.0.0.1 -n 2 >nul
 
-try {{
-    Log "Waiting for process {pid} to terminate..."
-    Wait-Process -Id {pid} -Timeout 2 -ErrorAction SilentlyContinue
-}} catch {{
-    Log "Wait-Process notice: $_"
-}}
+:: 2. Instant atomic rename of existing binary
+if exist "{dst_str}.old" del /F /Q "{dst_str}.old" >> "%LOGFILE%" 2>&1
+move /Y "{dst_str}" "{dst_str}.old" >> "%LOGFILE%" 2>&1
 
-try {{
-    Log "Stopping process {pid} (force)..."
-    Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
-}} catch {{}}
+:: 3. Move new binary into place
+move /Y "{src_str}" "{dst_str}" >> "%LOGFILE%" 2>&1
+if errorlevel 1 (
+    echo [%date% %time%] [Updater] Move failed, attempting copy fallback... >> "%LOGFILE%"
+    copy /Y "{src_str}" "{dst_str}" >> "%LOGFILE%" 2>&1
+) else (
+    echo [%date% %time%] [Updater] Binary swapped successfully >> "%LOGFILE%"
+)
 
-Start-Sleep -Seconds 1
+:: 4. Completely clear PyInstaller and Python environment variables
+set _MEIPASS2=
+set _MEIPASS=
+set PYTHONHOME=
+set PYTHONPATH=
 
-if (-not (Test-Path "{src_str}")) {{
-    Log "ERROR: Source file not found: {src_str}"
-    exit 1
-}}
+:: 5. Launch updated application in a clean independent process
+cd /d "{dst_dir}"
+echo [%date% %time%] [Updater] Launching updated application: {dst_str} >> "%LOGFILE%"
+start "" "{dst_str}"
+echo [%date% %time%] [Updater] Update process finished successfully >> "%LOGFILE%"
 
-$copied = $false
-for ($i = 1; $i -le 20; $i++) {{
-    try {{
-        Log "Copying binary (attempt $i/20)..."
-        Copy-Item -Path "{src_str}" -Destination "{dst_str}" -Force -ErrorAction Stop
-        $copied = $true
-        Log "Binary copied successfully!"
-        break
-    }} catch {{
-        Log "Copy failed on attempt $i : $_"
-        Start-Sleep -Seconds 1
-    }}
-}}
-
-if (-not $copied) {{
-    Log "FATAL: Could not replace destination binary."
-    exit 1
-}}
-
-try {{
-    Remove-Item -Path "{src_str}" -Force -ErrorAction SilentlyContinue
-    Log "Source temp file deleted."
-}} catch {{}}
-
-Start-Sleep -Milliseconds 500
-
-try {{
-    Log "Launching updated application: {dst_str}..."
-    $proc = Start-Process -FilePath "{dst_str}" -WorkingDirectory "{dst_dir}" -PassThru
-    Log "Application started successfully with new PID: $($proc.Id)"
-}} catch {{
-    Log "ERROR launching process: $_"
-}}
-
-Log "--- Update swap complete ---"
-Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+:: 6. Cleanup
+ping 127.0.0.1 -n 3 >nul
+del /F /Q "{dst_str}.old" >> "%LOGFILE%" 2>&1
+(goto) 2>nul & del /F /Q "%~f0"
 """
                 else:
-                    # Dev mode / not frozen: launch downloaded binary directly
-                    ps_script = f"""
-$logPath = "{updater_log_str}"
-function Log($text) {{
-    $time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-    "[$time] [Updater] $text" | Out-File -FilePath $logPath -Append -Encoding utf8
-}}
-
-Log "--- Starting dev mode update launch ---"
-Log "Source binary: {src_str}"
-
-try {{
-    Wait-Process -Id {pid} -Timeout 2 -ErrorAction SilentlyContinue
-    Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
-}} catch {{}}
-
-Start-Sleep -Seconds 1
-
-try {{
-    Log "Launching binary directly: {src_str}..."
-    $proc = Start-Process -FilePath "{src_str}" -WorkingDirectory "{dst_dir}" -PassThru
-    Log "Application started with PID: $($proc.Id)"
-}} catch {{
-    Log "ERROR launching process: $_"
-}}
-
-Log "--- Dev mode launch complete ---"
-Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+                    bat_script = f"""@echo off
+setlocal
+set "LOGFILE={updater_log_str}"
+echo [%date% %time%] [Updater] Starting dev mode launch >> "%LOGFILE%"
+taskkill /F /T /PID {pid} >> "%LOGFILE%" 2>&1
+ping 127.0.0.1 -n 2 >nul
+set _MEIPASS2=
+set _MEIPASS=
+cd /d "{dst_dir}"
+start "" "{src_str}"
+(goto) 2>nul & del /F /Q "%~f0"
 """
 
-                ps_path.write_text(ps_script, encoding="utf-8")
-                logger.info(f"[Updater] Spawned updater script: {ps_path}")
+                bat_path.write_text(bat_script, encoding="cp1252", errors="ignore")
+                logger.info(f"[Updater] Spawned updater script: {bat_path}")
 
-                # 0x00000200 (CREATE_NEW_PROCESS_GROUP) | 0x08000000 (CREATE_NO_WINDOW)
-                # Note: Do NOT use DETACHED_PROCESS (0x08) as it breaks powershell.exe console subsystem
-                creation_flags = 0x00000200 | 0x08000000
+                env = os.environ.copy()
+                env.pop("_MEIPASS2", None)
+                env.pop("_MEIPASS", None)
                 subprocess.Popen(
-                    [
-                        "powershell.exe",
-                        "-NoProfile",
-                        "-NonInteractive",
-                        "-ExecutionPolicy", "Bypass",
-                        "-File", str(ps_path)
-                    ],
-                    creationflags=creation_flags,
+                    ["cmd.exe", "/c", str(bat_path)],
+                    creationflags=0x08000000,  # CREATE_NO_WINDOW
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    env=env,
                     close_fds=True
                 )
                 return True

@@ -400,83 +400,57 @@ class KRTTrackerAgent:
 
             if sys.platform == "win32":
                 is_frozen = getattr(sys, "frozen", False)
-                ps_path = Path(tempfile.gettempdir()) / f"krt_restart_{pid}.ps1"
+                bat_path = Path(tempfile.gettempdir()) / f"krt_restart_{pid}.bat"
 
                 work_dir = str(exe_path.parent)
                 updater_log_str = str(UPDATER_LOG_PATH.resolve())
                 if is_frozen:
-                    ps_script = f"""
-$logPath = "{updater_log_str}"
-function Log($text) {{
-    $time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-    "[$time] [Restart] $text" | Out-File -FilePath $logPath -Append -Encoding utf8
-}}
+                    bat_script = f"""@echo off
+setlocal
+set "LOGFILE={updater_log_str}"
+echo [%date% %time%] [Restart] Starting application restart >> "%LOGFILE%"
+echo [%date% %time%] [Restart] Target PID: {pid} >> "%LOGFILE%"
+echo [%date% %time%] [Restart] Executable: {str(exe_path)} >> "%LOGFILE%"
 
-Log "--- Starting app restart ---"
-Log "Target PID: {pid}"
-Log "Executable: {str(exe_path)}"
-Log "Work dir: {work_dir}"
+taskkill /F /T /PID {pid} >> "%LOGFILE%" 2>&1
+ping 127.0.0.1 -n 2 >nul
 
-try {{
-    Log "Waiting for process {pid}..."
-    Wait-Process -Id {pid} -Timeout 2 -ErrorAction SilentlyContinue
-    Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
-}} catch {{}}
+set _MEIPASS2=
+set _MEIPASS=
+set PYTHONHOME=
+set PYTHONPATH=
 
-Start-Sleep -Seconds 1
-
-try {{
-    Log "Launching executable: {str(exe_path)}..."
-    $proc = Start-Process -FilePath "{str(exe_path)}" -WorkingDirectory "{work_dir}" -PassThru
-    Log "Application restarted with PID: $($proc.Id)"
-}} catch {{
-    Log "ERROR restarting process: $_"
-}}
-
-Log "--- App restart complete ---"
-Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+cd /d "{work_dir}"
+echo [%date% %time%] [Restart] Launching: {str(exe_path)} >> "%LOGFILE%"
+start "" "{str(exe_path)}"
+echo [%date% %time%] [Restart] App restarted >> "%LOGFILE%"
+(goto) 2>nul & del /F /Q "%~f0"
 """
                 else:
-                    ps_script = f"""
-$logPath = "{updater_log_str}"
-function Log($text) {{
-    $time = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
-    "[$time] [Restart] $text" | Out-File -FilePath $logPath -Append -Encoding utf8
-}}
-
-Log "--- Starting dev mode restart ---"
-try {{
-    Wait-Process -Id {pid} -Timeout 2 -ErrorAction SilentlyContinue
-    Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
-}} catch {{}}
-
-Start-Sleep -Seconds 1
-
-try {{
-    $proc = Start-Process -FilePath "{sys.executable}" -ArgumentList '"{str(exe_path)}"' -WorkingDirectory "{work_dir}" -PassThru
-    Log "Dev process restarted with PID: $($proc.Id)"
-}} catch {{
-    Log "ERROR restarting dev process: $_"
-}}
-
-Log "--- Dev mode restart complete ---"
-Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+                    bat_script = f"""@echo off
+setlocal
+set "LOGFILE={updater_log_str}"
+echo [%date% %time%] [Restart] Starting dev mode restart >> "%LOGFILE%"
+taskkill /F /T /PID {pid} >> "%LOGFILE%" 2>&1
+ping 127.0.0.1 -n 2 >nul
+set _MEIPASS2=
+set _MEIPASS=
+cd /d "{work_dir}"
+start "" "{sys.executable}" "{str(exe_path)}"
+(goto) 2>nul & del /F /Q "%~f0"
 """
 
-                ps_path.write_text(ps_script, encoding="utf-8")
-                creation_flags = 0x00000200 | 0x08000000  # CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+                bat_path.write_text(bat_script, encoding="cp1252", errors="ignore")
+                env = os.environ.copy()
+                env.pop("_MEIPASS2", None)
+                env.pop("_MEIPASS", None)
                 subprocess.Popen(
-                    [
-                        "powershell.exe",
-                        "-NoProfile",
-                        "-NonInteractive",
-                        "-ExecutionPolicy", "Bypass",
-                        "-File", str(ps_path)
-                    ],
-                    creationflags=creation_flags,
+                    ["cmd.exe", "/c", str(bat_path)],
+                    creationflags=0x08000000,  # CREATE_NO_WINDOW
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    env=env,
                     close_fds=True
                 )
             else:

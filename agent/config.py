@@ -42,7 +42,7 @@ except ImportError:
 # Application metadata
 APP_NAME = "KRT Bookings Tracker"
 APP_ID = "fr.krt.bookings.tracker"
-_RAW_VERSION = os.environ.get("APP_VERSION", _BAKED_CONFIG.get("APP_VERSION", "1.0.7"))
+_RAW_VERSION = os.environ.get("APP_VERSION", _BAKED_CONFIG.get("APP_VERSION", "1.0.8"))
 APP_VERSION = _RAW_VERSION.lstrip("vV").strip()
 APP_VERSION_DISPLAY = f"v{APP_VERSION}"
 
