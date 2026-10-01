@@ -404,6 +404,15 @@ class KRTTrackerAgent:
 
                 work_dir = str(exe_path.parent)
                 updater_log_str = str(UPDATER_LOG_PATH.resolve())
+
+                # Clear Win32 OS-level environment variables
+                try:
+                    import ctypes
+                    ctypes.windll.kernel32.SetEnvironmentVariableW("_MEIPASS2", None)
+                    ctypes.windll.kernel32.SetEnvironmentVariableW("_MEIPASS", None)
+                except Exception:
+                    pass
+
                 if is_frozen:
                     bat_script = f"""@echo off
 setlocal
@@ -412,17 +421,18 @@ echo [%date% %time%] [Restart] Starting application restart >> "%LOGFILE%"
 echo [%date% %time%] [Restart] Target PID: {pid} >> "%LOGFILE%"
 echo [%date% %time%] [Restart] Executable: {str(exe_path)} >> "%LOGFILE%"
 
-taskkill /F /T /PID {pid} >> "%LOGFILE%" 2>&1
-ping 127.0.0.1 -n 2 >nul
+:: Wait 2 seconds for parent process to exit and release all temporary directory handles
+echo [%date% %time%] [Restart] Waiting for parent process {pid} to terminate... >> "%LOGFILE%"
+ping 127.0.0.1 -n 3 >nul
 
-set _MEIPASS2=
-set _MEIPASS=
-set PYTHONHOME=
-set PYTHONPATH=
+set "_MEIPASS2="
+set "_MEIPASS="
+set "PYTHONHOME="
+set "PYTHONPATH="
 
 cd /d "{work_dir}"
 echo [%date% %time%] [Restart] Launching: {str(exe_path)} >> "%LOGFILE%"
-start "" "{str(exe_path)}"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "(New-Object -ComObject Shell.Application).ShellExecute('{str(exe_path)}', '', '{work_dir}', 'open', 1)" >> "%LOGFILE%" 2>&1
 echo [%date% %time%] [Restart] App restarted >> "%LOGFILE%"
 (goto) 2>nul & del /F /Q "%~f0"
 """
@@ -431,10 +441,9 @@ echo [%date% %time%] [Restart] App restarted >> "%LOGFILE%"
 setlocal
 set "LOGFILE={updater_log_str}"
 echo [%date% %time%] [Restart] Starting dev mode restart >> "%LOGFILE%"
-taskkill /F /T /PID {pid} >> "%LOGFILE%" 2>&1
-ping 127.0.0.1 -n 2 >nul
-set _MEIPASS2=
-set _MEIPASS=
+ping 127.0.0.1 -n 3 >nul
+set "_MEIPASS2="
+set "_MEIPASS="
 cd /d "{work_dir}"
 start "" "{sys.executable}" "{str(exe_path)}"
 (goto) 2>nul & del /F /Q "%~f0"
@@ -446,6 +455,7 @@ start "" "{sys.executable}" "{str(exe_path)}"
                 env.pop("_MEIPASS", None)
                 subprocess.Popen(
                     ["cmd.exe", "/c", str(bat_path)],
+                    cwd=tempfile.gettempdir(),
                     creationflags=0x08000000,  # CREATE_NO_WINDOW
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,

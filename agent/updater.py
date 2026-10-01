@@ -228,6 +228,14 @@ class AutoUpdater:
                 dst_dir = str(current_exe.parent)
                 updater_log_str = str(UPDATER_LOG_PATH.resolve())
 
+                # Clear Win32 OS-level environment variables
+                try:
+                    import ctypes
+                    ctypes.windll.kernel32.SetEnvironmentVariableW("_MEIPASS2", None)
+                    ctypes.windll.kernel32.SetEnvironmentVariableW("_MEIPASS", None)
+                except Exception:
+                    pass
+
                 if is_frozen:
                     bat_script = f"""@echo off
 setlocal
@@ -237,34 +245,33 @@ echo [%date% %time%] [Updater] Target PID: {pid} >> "%LOGFILE%"
 echo [%date% %time%] [Updater] Source binary: {src_str} >> "%LOGFILE%"
 echo [%date% %time%] [Updater] Destination: {dst_str} >> "%LOGFILE%"
 
-:: 1. Force kill the running application process tree
-echo [%date% %time%] [Updater] Terminating process {pid}... >> "%LOGFILE%"
-taskkill /F /T /PID {pid} >> "%LOGFILE%" 2>&1
-ping 127.0.0.1 -n 2 >nul
-
-:: 2. Instant atomic rename of existing binary
+:: 1. Instant atomic NTFS rename of existing binary (works while in-use)
 if exist "{dst_str}.old" del /F /Q "{dst_str}.old" >> "%LOGFILE%" 2>&1
 move /Y "{dst_str}" "{dst_str}.old" >> "%LOGFILE%" 2>&1
 
-:: 3. Move new binary into place
+:: 2. Place new binary in destination
 move /Y "{src_str}" "{dst_str}" >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
-    echo [%date% %time%] [Updater] Move failed, attempting copy fallback... >> "%LOGFILE%"
+    echo [%date% %time%] [Updater] Move failed, trying copy fallback... >> "%LOGFILE%"
     copy /Y "{src_str}" "{dst_str}" >> "%LOGFILE%" 2>&1
 ) else (
     echo [%date% %time%] [Updater] Binary swapped successfully >> "%LOGFILE%"
 )
 
-:: 4. Completely clear PyInstaller and Python environment variables
-set _MEIPASS2=
-set _MEIPASS=
-set PYTHONHOME=
-set PYTHONPATH=
+:: 3. Wait 2 seconds for parent process to exit and release all temporary directory handles cleanly
+echo [%date% %time%] [Updater] Waiting for parent process {pid} to terminate... >> "%LOGFILE%"
+ping 127.0.0.1 -n 3 >nul
 
-:: 5. Launch updated application in a clean independent process
+:: 4. Clean environment variables
+set "_MEIPASS2="
+set "_MEIPASS="
+set "PYTHONHOME="
+set "PYTHONPATH="
+
+:: 5. Launch updated application cleanly via Windows Shell
 cd /d "{dst_dir}"
 echo [%date% %time%] [Updater] Launching updated application: {dst_str} >> "%LOGFILE%"
-start "" "{dst_str}"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "(New-Object -ComObject Shell.Application).ShellExecute('{dst_str}', '', '{dst_dir}', 'open', 1)" >> "%LOGFILE%" 2>&1
 echo [%date% %time%] [Updater] Update process finished successfully >> "%LOGFILE%"
 
 :: 6. Cleanup
@@ -277,10 +284,9 @@ del /F /Q "{dst_str}.old" >> "%LOGFILE%" 2>&1
 setlocal
 set "LOGFILE={updater_log_str}"
 echo [%date% %time%] [Updater] Starting dev mode launch >> "%LOGFILE%"
-taskkill /F /T /PID {pid} >> "%LOGFILE%" 2>&1
-ping 127.0.0.1 -n 2 >nul
-set _MEIPASS2=
-set _MEIPASS=
+ping 127.0.0.1 -n 3 >nul
+set "_MEIPASS2="
+set "_MEIPASS="
 cd /d "{dst_dir}"
 start "" "{src_str}"
 (goto) 2>nul & del /F /Q "%~f0"
@@ -294,6 +300,7 @@ start "" "{src_str}"
                 env.pop("_MEIPASS", None)
                 subprocess.Popen(
                     ["cmd.exe", "/c", str(bat_path)],
+                    cwd=tempfile.gettempdir(),
                     creationflags=0x08000000,  # CREATE_NO_WINDOW
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
