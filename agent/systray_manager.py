@@ -3,9 +3,11 @@ System Tray (Systray) Manager for KRT Bookings Tracker Agent.
 Uses pystray + Pillow for cross-platform taskbar icon and context menu.
 """
 import threading
+import webbrowser
 from typing import Optional
 import pystray
 from PIL import Image, ImageDraw
+from agent.config import WEB_SCHEDULES_URL
 from agent.logger import logger
 
 class SystrayManager:
@@ -102,6 +104,13 @@ class SystrayManager:
             logger.info("Tray clicked: Open Dashboard")
             self.agent.root.after(0, self.agent.show_dashboard)
 
+        def on_open_web_schedule(icon, item):
+            logger.info(f"Tray clicked: Open Web Schedule ({WEB_SCHEDULES_URL})")
+            try:
+                webbrowser.open(WEB_SCHEDULES_URL)
+            except Exception as e:
+                logger.error(f"Error opening web schedule URL: {e}")
+
         def on_toggle_pause(icon, item):
             logger.info("Tray clicked: Toggle Pause")
             if self.agent.status == "active":
@@ -140,6 +149,7 @@ class SystrayManager:
             pystray.MenuItem(f"👤 KRT Tracker : {user_name}", None, enabled=False),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("⏱️  Suivi de la journée (Dashboard)", on_open_dashboard, default=True),
+            pystray.MenuItem("📅  Gérer mes horaires (Web)", on_open_web_schedule),
             pystray.MenuItem(get_pause_label, on_toggle_pause),
             pystray.MenuItem(get_mode_label, on_toggle_mode),
             pystray.Menu.SEPARATOR,

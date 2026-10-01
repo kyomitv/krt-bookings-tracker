@@ -54,6 +54,12 @@ GITHUB_REPO = os.environ.get(
 UPDATE_CHECK_ON_STARTUP = True
 UPDATE_CHECK_INTERVAL_SECONDS = 14400 # 4 hours
 
+# Web Dashboard / Schedules URL
+WEB_SCHEDULES_URL = os.environ.get(
+    "WEB_SCHEDULES_URL",
+    _BAKED_CONFIG.get("WEB_SCHEDULES_URL", "https://krt-bookings-two.vercel.app/dashboard/team")
+)
+
 # Supabase config
 SUPABASE_URL = os.environ.get(
     "SUPABASE_URL",

@@ -8,7 +8,7 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from agent.config import APP_NAME, SUPABASE_URL, SUPABASE_ANON_KEY
+from agent.config import APP_NAME, SUPABASE_URL, SUPABASE_ANON_KEY, WEB_SCHEDULES_URL
 from agent.crypto_storage import SecureStorage
 from agent.autostart import AutostartManager
 from agent.supabase_client import SupabaseClient
@@ -22,6 +22,7 @@ class TestKRTAgent(unittest.TestCase):
         self.assertEqual(APP_NAME, "KRT Bookings Tracker")
         self.assertTrue(len(SUPABASE_URL) > 0)
         self.assertTrue(len(SUPABASE_ANON_KEY) > 0)
+        self.assertEqual(WEB_SCHEDULES_URL, "https://krt-bookings-two.vercel.app/dashboard/team")
 
     def test_versioning_and_updater(self):
         # Version parsing
@@ -252,6 +253,16 @@ class TestKRTAgent(unittest.TestCase):
         self.assertFalse(APP_VERSION.startswith("v"))
         self.assertTrue(APP_VERSION_DISPLAY.startswith("v"))
         self.assertEqual(APP_VERSION_DISPLAY, f"v{APP_VERSION}")
+
+    def test_systray_menu_schedule_link(self):
+        from unittest.mock import MagicMock
+        mock_agent = MagicMock()
+        mock_agent.get_user_display_name.return_value = "Test User"
+        mock_agent.status = "active"
+        systray = SystrayManager(mock_agent)
+        menu = systray._build_menu()
+        menu_texts = [str(item.text) if hasattr(item, "text") else "" for item in menu.items]
+        self.assertTrue(any("Gérer mes horaires (Web)" in text for text in menu_texts))
 
 if __name__ == "__main__":
     unittest.main()
